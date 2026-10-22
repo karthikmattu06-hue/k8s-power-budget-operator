@@ -1,0 +1,44 @@
+{
+  "overlay_for": {"schema_version": "0.3", "revision": 2},
+  "producer": {"project": "k8s-power-budget-operator", "updated": "2026-10-19"},
+  "note": "Entries taken from published papers so the simulator can run before measured entries exist. Additive only: never edits a contract entry. Each hardware record carries origin='published' and a citation; each number keeps the paper's own statistic (medians are not entered as p99).",
+
+  "hardware": {
+    "yan2026_h200_sglang": {
+      "gpu": "NVIDIA H200", "nominal_w": 700,
+      "model": "Qwen3-32B", "serving": "SGLang 0.5.9",
+      "topology": "disaggregated, 3 prefill + 2 decode instances, one GPU per instance",
+      "site": "published", "experiment": "Sec. 5.3.2, Fig. 5 (right): one decode instance removed for 10 min at 80% of 3p2d capacity, then restored",
+      "date": "2026-09", "origin": "published",
+      "citation": "Yan, Wang, Biao, Chao, Zhang, Cui. Analytical Power-Aware Provisioning for Prefill-Decode Disaggregated AI Inference. arXiv:2609.24639, 2026",
+      "note": "nominal_w = H200 SXM TDP (700 W), assumed; the paper's configured power limit was not checked"
+    }
+  },
+
+  "levers": [
+    {
+      "name": "replica_count", "pool": "decode", "authority": "operator",
+      "setting": {"replicas_removed": 1},
+      "at_load": {"rate_rps": 5.3, "pool_busy_frac": 0.8, "status": "measured",
+                  "note": "request rate held at 80% of the 3p2d serving capacity; after removal capacity is 5.2 req/s, just below the offered rate"},
+      "source_hardware": {"ref": "yan2026_h200_sglang"},
+      "depth_frac": {"value": 0.886, "status": "measured",
+                     "note": "~620 W total reduction / 700 W nominal; net of the remaining decode instance working harder"},
+      "speed_s": {"value": null, "status": "n/a", "note": "not reported"},
+      "duration_s": {"value": null, "status": "n/a", "bound": null,
+                     "note": "queue grew for the whole 10-min removal; median TTFT reached 8.5 s, above a 2 s premium SLO, so premium duration < 600 s; exact value not reported"},
+      "cost": {
+        "all": {
+          "d_ttft_p99_ms": {"value": null, "status": "n/a", "note": "median TTFT 0.7 -> 8.5 s (+7.8 s); p99 not reported"},
+          "d_tpot_p99_ms": {"value": null, "status": "n/a", "note": "median TPOT 27 -> 39 ms (+12 ms); p99 not reported"}
+        }
+      },
+      "release": {
+        "recovery_s": {"value": 78, "status": "measured", "note": "accumulated queue drained ~1.3 min after the instance was restored"},
+        "rebound_frac": {"value": null, "status": "n/a", "note": "not reported"},
+        "rebound_s": {"value": null, "status": "n/a"},
+        "d_ttft_p99_after_ms": {"value": null, "status": "n/a"}
+      }
+    }
+  ]
+}

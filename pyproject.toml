@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pbo"
+description = "Kubernetes power-budget operator for multi-service LLM inference"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Karthik Mattu", email = "km5503@rit.edu" }]
+dynamic = ["version"]
+# The curve loader is stdlib-only on purpose. Runtime dependencies for the
+# operator, mock pod and emulator are added in the phase that needs them.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
+study = ["numpy>=1.26", "scipy>=1.11", "matplotlib>=3.7"]
+
+[tool.hatch.version]
+path = "src/pbo/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pbo"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["studies"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

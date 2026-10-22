@@ -1,0 +1,12 @@
+{
+  "_comment": "Stage 0 inputs. Every number carries a source and a status. Fractions are of a node's nominal GPU power, matching lever-curves-v0.2 units. 'estimated' means read off a paper's figure or derived; nothing here is Jade-measured except where noted.",
+  "static_frac": {"value": 0.17, "status": "measured", "source": "Jade v0.2 parked_frac (43 W / 250 W, A100)"},
+  "cap_floor_frac": {"value": 0.60, "status": "measured", "source": "Jade v0.2 gpu_power_cap note: settable floor 150 W of 250 W"},
+  "cap_power_model": {"form": "P(r) = static + (1-static)*r^3, r = clock ratio", "status": "estimated", "source": "PowerSlider arXiv:2608.21719, A100 power-frequency cubic"},
+  "prefill_latency_vs_clock": {"form": "TTFT ~ 1/r (compute-bound)", "status": "estimated", "source": "PowerSlider phase asymmetry; PALS arXiv:2605.21427"},
+  "decode_latency_vs_clock": {"form": "TPOT flat until r_knee, then ~ r_knee/r (memory-bound)", "r_knee": 0.60, "status": "estimated", "source": "PowerSlider Fig. on decode insensitivity; knee value is our read of the figure"},
+  "remove_depth_frac": {"prefill": 0.76, "decode": 0.63, "mono": 0.67, "status": "estimated", "source": "Jade v0.2 drain_to_parked per pool; mono = measured busy 0.84 - parked 0.17"},
+  "remove_latency_cap": {"value": 12.0, "status": "measured", "source": "Yan et al. arXiv:2609.24639: median TTFT 0.7 s -> 8.5 s on decode-instance removal (~12x)"},
+  "admission_depth_frac_per_flex_share": {"value": 0.62, "status": "estimated", "source": "Jade v0.2 admission_by_tier"},
+  "tier_weights": {"premium": 1.0, "flex": 0.2, "status": "assumption", "source": "flex is pre-consented deferral (Decision 5); weight is a design choice, swept in the script"}
+}

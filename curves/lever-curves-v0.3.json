@@ -1,0 +1,793 @@
+{
+  "schema_version": "0.3",
+  "revision": 2,
+  "frozen_for_cloud": "2026-10-19",
+  "freeze_rule": "STRUCTURE is frozen at 0.3 rev 2: field names, nesting, units, row definitions, enums. VALUES may change without a new revision: Jade fills or replaces entries (status estimated -> measured) and may append entries with new (name, pool, setting, at_load). Any structural change bumps 'revision' (or schema_version) and is reviewed by both chats before use.",
+  "history": [
+    "0.3 rev 1, 19 Oct 2026: draft",
+    "0.3 rev 2, 19 Oct 2026: cloud-side review M1-M4 applied; frozen for the control plane"
+  ],
+  "producer": {
+    "project": "jade",
+    "updated": "2026-10-19"
+  },
+  "tiers": {
+    "premium": {
+      "ttft_p99_slo_ms": {
+        "value": 2000,
+        "status": "assumed",
+        "note": "Jade's choice; tighter than QoServe's interactive 6 s"
+      },
+      "tpot_p99_slo_ms": {
+        "value": 50,
+        "status": "assumed",
+        "note": "QoServe (ASPLOS '26) interactive TBT"
+      }
+    },
+    "standard": {
+      "ttft_p99_slo_ms": {
+        "value": 6000,
+        "status": "assumed",
+        "note": "QoServe interactive TTFT"
+      },
+      "tpot_p99_slo_ms": {
+        "value": 50,
+        "status": "assumed",
+        "note": "QoServe interactive TBT"
+      }
+    },
+    "flex": {
+      "ttlt_slo_ms": {
+        "value": 600000,
+        "status": "assumed",
+        "note": "QoServe non-interactive Q2, 600 s to last token"
+      }
+    },
+    "default_mix": {
+      "premium": 0.333,
+      "standard": 0.333,
+      "flex": 0.334,
+      "note": "QoServe's stated assumption; no production tier mix is published. Sensitivity: 0.70/0.15/0.15 and 0.15/0.15/0.70"
+    },
+    "header_note": "tier header name is project-local (Jade: X-Jade-Tier; control plane: X-Service-Tier). Tier names and reject/defer semantics are shared."
+  },
+  "event_protocol": {
+    "baseline_s": 60,
+    "hold_s": 120,
+    "after_s": 60,
+    "repeats": 3,
+    "long_hold_s": 600,
+    "long_hold_applies_to": "admission_by_tier with mode=defer: one extra event per entry, to measure duration up to the flex TTLT SLO",
+    "one_lever_per_pool_per_event": true,
+    "note": "one event = baseline at constant offered load -> command -> hold -> release -> after window. One command may produce rows for both pools (drain sheds new work to both)."
+  },
+  "states": [
+    {
+      "pool": "any",
+      "state": "parked",
+      "frac": {
+        "value": 0.17,
+        "status": "measured",
+        "note": "43 W hot, 39 W cold, ~0.4 W/C (E0.1)"
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      }
+    },
+    {
+      "pool": "prefill",
+      "state": "busy",
+      "frac": {
+        "value": 0.92,
+        "status": "estimated",
+        "note": "prefill-dominated window, 230 W, cap flag 90% (E0.1); E1 measures on its own GPU"
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      }
+    },
+    {
+      "pool": "decode",
+      "state": "busy",
+      "frac": {
+        "value": 0.79,
+        "status": "estimated",
+        "note": "decode-dominated window, 197 W (E0.1); E1 measures on its own GPU"
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      }
+    },
+    {
+      "pool": "any",
+      "state": "busy_monolithic",
+      "frac": {
+        "value": 0.84,
+        "status": "measured",
+        "note": "mixed traffic, ~210 W (E0.1)"
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      }
+    }
+  ],
+  "hardware": {
+    "sporc_a100_pcie_e01": {
+      "gpu": "NVIDIA A100-PCIE-40GB",
+      "nominal_w": 250,
+      "cap_range_w": [
+        150,
+        250
+      ],
+      "model": "Qwen/Qwen2.5-1.5B-Instruct",
+      "serving": "vLLM 0.28.0",
+      "topology": "monolithic",
+      "site": "RIT SPORC",
+      "experiment": "E0.1",
+      "date": "2026-09-09",
+      "origin": "measured_jade"
+    },
+    "sporc_a100_pcie_disagg": {
+      "gpu": "NVIDIA A100-PCIE-40GB",
+      "nominal_w": 250,
+      "cap_range_w": [
+        150,
+        250
+      ],
+      "model": "Qwen/Qwen2.5-1.5B-Instruct",
+      "serving": "vLLM 0.28.0, NixlConnector",
+      "topology": "disaggregated",
+      "site": "RIT SPORC",
+      "experiment": "E1/E3",
+      "date": null,
+      "origin": "measured_jade",
+      "note": "filled when E1 lands; node and its topo (NODE/SYS) recorded per run"
+    }
+  },
+  "levers": [
+    {
+      "name": "admission_by_tier",
+      "pool": "prefill",
+      "authority": "operator",
+      "setting": {
+        "shed": [
+          "flex"
+        ],
+        "mode": "reject"
+      },
+      "at_load": {
+        "rate_rps": null,
+        "pool_busy_frac": null,
+        "status": "n/a",
+        "note": "set from E1's curve",
+        "tier_mix": {
+          "premium": 0.333,
+          "standard": 0.333,
+          "flex": 0.334
+        }
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      },
+      "depth_frac": {
+        "value": 0.21,
+        "status": "estimated",
+        "note": "at the stated tier_mix: (busy - parked) on the prefill pool x flex share = 0.62 x 1/3; E3 measures"
+      },
+      "speed_s": {
+        "value": 8,
+        "status": "estimated",
+        "note": "prefill queue empties in seconds"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "note": "reject builds no queue; expected unbounded, E3 confirms",
+        "bound": null
+      },
+      "cost": {
+        "premium": {
+          "d_ttft_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          },
+          "d_tpot_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          }
+        },
+        "standard": {
+          "d_ttft_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          },
+          "d_tpot_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          }
+        },
+        "flex": {
+          "served_frac": {
+            "value": 0,
+            "status": "estimated",
+            "note": "rejected during hold"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": 30,
+          "status": "estimated"
+        },
+        "rebound_frac": {
+          "value": 0.0,
+          "status": "estimated",
+          "note": "rejected work does not come back"
+        },
+        "rebound_s": {
+          "value": 0,
+          "status": "estimated"
+        },
+        "d_ttft_p99_after_ms": {
+          "value": null,
+          "status": "n/a"
+        }
+      },
+      "depth_per_unit_shed_share": {
+        "value": 0.62,
+        "status": "estimated",
+        "note": "for re-scaling to other mixes; not linear near the parked floor"
+      }
+    },
+    {
+      "name": "admission_by_tier",
+      "pool": "prefill",
+      "authority": "operator",
+      "setting": {
+        "shed": [
+          "flex"
+        ],
+        "mode": "defer"
+      },
+      "at_load": {
+        "rate_rps": null,
+        "pool_busy_frac": null,
+        "status": "n/a",
+        "tier_mix": {
+          "premium": 0.333,
+          "standard": 0.333,
+          "flex": 0.334
+        }
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      },
+      "depth_frac": {
+        "value": 0.21,
+        "status": "estimated",
+        "note": "at the stated tier_mix: (busy - parked) on the prefill pool x flex share = 0.62 x 1/3; E3 measures"
+      },
+      "speed_s": {
+        "value": 8,
+        "status": "estimated"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "note": "capped at 600 s by the flex TTLT SLO (and the proxy's --max-hold-s, which must be >= 600); measured with the long-hold event",
+        "bound": null
+      },
+      "cost": {
+        "premium": {
+          "d_ttft_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          },
+          "d_tpot_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          }
+        },
+        "standard": {
+          "d_ttft_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          },
+          "d_tpot_p99_ms": {
+            "value": 0,
+            "status": "estimated"
+          }
+        },
+        "flex": {
+          "d_ttlt_p99_ms": {
+            "value": null,
+            "status": "n/a",
+            "note": "~hold time; E3 measures"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": 30,
+          "status": "estimated"
+        },
+        "rebound_frac": {
+          "value": 0.1,
+          "status": "estimated",
+          "note": "held backlog hits the prefill pool at once"
+        },
+        "rebound_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "d_ttft_p99_after_ms": {
+          "value": null,
+          "status": "n/a",
+          "note": "premium latency while the backlog clears: the headline release number"
+        }
+      },
+      "depth_per_unit_shed_share": {
+        "value": 0.62,
+        "status": "estimated",
+        "note": "for re-scaling to other mixes; not linear near the parked floor"
+      }
+    },
+    {
+      "name": "drain_to_parked",
+      "pool": "prefill",
+      "authority": "operator",
+      "setting": {
+        "shed": [
+          "premium",
+          "standard",
+          "flex"
+        ],
+        "mode": "reject"
+      },
+      "at_load": {
+        "rate_rps": null,
+        "pool_busy_frac": null,
+        "status": "n/a",
+        "tier_mix": {
+          "premium": 0.333,
+          "standard": 0.333,
+          "flex": 0.334
+        }
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      },
+      "depth_frac": {
+        "value": 0.76,
+        "status": "estimated",
+        "note": "230 -> 40 W"
+      },
+      "speed_s": {
+        "value": 3,
+        "status": "estimated",
+        "note": "prefill jobs are sub-second"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "note": "every tier unserved: set by the contract, not the GPU",
+        "bound": null
+      },
+      "cost": {
+        "all": {
+          "served_frac": {
+            "value": 0,
+            "status": "estimated"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": 15,
+          "status": "estimated"
+        },
+        "rebound_frac": {
+          "value": null,
+          "status": "n/a"
+        },
+        "rebound_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "d_ttft_p99_after_ms": {
+          "value": null,
+          "status": "n/a"
+        }
+      }
+    },
+    {
+      "name": "drain_to_parked",
+      "pool": "decode",
+      "authority": "operator",
+      "setting": {
+        "shed": [
+          "premium",
+          "standard",
+          "flex"
+        ],
+        "mode": "reject"
+      },
+      "at_load": {
+        "rate_rps": null,
+        "pool_busy_frac": null,
+        "status": "n/a",
+        "tier_mix": {
+          "premium": 0.333,
+          "standard": 0.333,
+          "flex": 0.334
+        }
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      },
+      "depth_frac": {
+        "value": 0.63,
+        "status": "estimated",
+        "note": "197 -> 40 W"
+      },
+      "speed_s": {
+        "value": 12,
+        "status": "estimated",
+        "note": "in-flight answers finish: output_len x TPOT"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "bound": null
+      },
+      "cost": {
+        "all": {
+          "served_frac": {
+            "value": 0,
+            "status": "estimated"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": 15,
+          "status": "estimated"
+        },
+        "rebound_frac": {
+          "value": null,
+          "status": "n/a"
+        },
+        "rebound_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "d_ttft_p99_after_ms": {
+          "value": null,
+          "status": "n/a"
+        }
+      }
+    },
+    {
+      "name": "replica_count",
+      "pool": "any",
+      "authority": "operator",
+      "setting": {
+        "replicas_removed": 1
+      },
+      "at_load": {
+        "rate_rps": null,
+        "pool_busy_frac": null,
+        "status": "n/a",
+        "tier_mix": {
+          "premium": 0.333,
+          "standard": 0.333,
+          "flex": 0.334
+        }
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      },
+      "depth_frac": {
+        "value": 0.63,
+        "status": "estimated",
+        "note": "that GPU parks; the node stays up"
+      },
+      "speed_s": {
+        "value": 90,
+        "status": "estimated",
+        "note": "pod termination + drain"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "note": "depends on remaining capacity vs load (E1 curve)",
+        "bound": null
+      },
+      "cost": {
+        "premium": {
+          "d_ttft_p99_ms": {
+            "value": null,
+            "status": "n/a"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": 120,
+          "status": "estimated",
+          "note": "model reload"
+        },
+        "rebound_frac": {
+          "value": null,
+          "status": "n/a"
+        },
+        "rebound_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "d_ttft_p99_after_ms": {
+          "value": null,
+          "status": "n/a"
+        }
+      },
+      "published_reference": "Yan et al., arXiv:2609.24639 (H200): one decode instance removed, ~620 W saved, median TTFT 0.7 -> 8.5 s, queue recovers in ~1.3 min"
+    },
+    {
+      "name": "batch_cap",
+      "pool": "decode",
+      "authority": "operator",
+      "role": "efficiency, not power",
+      "setting": {
+        "max_num_seqs": "1..32"
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      },
+      "depth_frac": {
+        "value": 0.15,
+        "status": "measured",
+        "note": "177 -> 214 W across batch 1..32"
+      },
+      "speed_s": {
+        "value": 120,
+        "status": "estimated",
+        "note": "restart-only flag"
+      }
+    },
+    {
+      "name": "sleep_wake",
+      "pool": "any",
+      "authority": "operator",
+      "setting": {
+        "state": "sleep"
+      },
+      "source_hardware": {
+        "ref": "sporc_a100_pcie_e01"
+      },
+      "depth_frac": {
+        "value": 0.05,
+        "status": "estimated",
+        "note": "parked 43 W -> ~30 W"
+      },
+      "speed_s": {
+        "value": 3,
+        "status": "estimated"
+      },
+      "release": {
+        "recovery_s": {
+          "value": 5,
+          "status": "estimated"
+        }
+      }
+    },
+    {
+      "name": "gpu_power_cap",
+      "pool": "prefill",
+      "authority": "root",
+      "setting": {
+        "cap_frac": 0.8
+      },
+      "source_hardware": {
+        "ref": null,
+        "note": "SPORC via RC, or rented A100-PCIe; until then the cloud side may fill from a published curve with origin='published'"
+      },
+      "depth_frac": {
+        "value": null,
+        "status": "n/a",
+        "note": "stock 250 W cap already binds 90% of prefill samples (E0.1)"
+      },
+      "speed_s": {
+        "value": null,
+        "status": "n/a"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "bound": null
+      },
+      "cost": {
+        "premium": {
+          "d_ttft_p99_ms": {
+            "value": null,
+            "status": "n/a"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "rebound_frac": {
+          "value": null,
+          "status": "n/a"
+        }
+      },
+      "repeat_for_settings": [
+        0.9,
+        0.8,
+        0.7,
+        0.6
+      ]
+    },
+    {
+      "name": "gpu_power_cap",
+      "pool": "decode",
+      "authority": "root",
+      "setting": {
+        "cap_frac": 0.8
+      },
+      "source_hardware": {
+        "ref": null
+      },
+      "depth_frac": {
+        "value": null,
+        "status": "n/a",
+        "note": "expected no-op above ~0.8 (decode ~197 W); open disagreement in the literature (G6)"
+      },
+      "speed_s": {
+        "value": null,
+        "status": "n/a"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "bound": null
+      },
+      "cost": {
+        "premium": {
+          "d_tpot_p99_ms": {
+            "value": null,
+            "status": "n/a"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "rebound_frac": {
+          "value": null,
+          "status": "n/a"
+        }
+      },
+      "repeat_for_settings": [
+        0.9,
+        0.8,
+        0.7,
+        0.6
+      ]
+    },
+    {
+      "name": "gpu_clock_lock",
+      "pool": "prefill",
+      "authority": "root",
+      "setting": {
+        "sm_mhz": null
+      },
+      "source_hardware": {
+        "ref": null
+      },
+      "depth_frac": {
+        "value": null,
+        "status": "n/a"
+      },
+      "speed_s": {
+        "value": null,
+        "status": "n/a"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "bound": null
+      },
+      "cost": {
+        "premium": {
+          "d_ttft_p99_ms": {
+            "value": null,
+            "status": "n/a"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "rebound_frac": {
+          "value": null,
+          "status": "n/a"
+        }
+      },
+      "repeat_for_settings": "3-4 values from nvidia-smi -q -d SUPPORTED_CLOCKS"
+    },
+    {
+      "name": "gpu_clock_lock",
+      "pool": "decode",
+      "authority": "root",
+      "setting": {
+        "sm_mhz": null
+      },
+      "source_hardware": {
+        "ref": null
+      },
+      "depth_frac": {
+        "value": null,
+        "status": "n/a"
+      },
+      "speed_s": {
+        "value": null,
+        "status": "n/a"
+      },
+      "duration_s": {
+        "value": null,
+        "status": "n/a",
+        "bound": null
+      },
+      "cost": {
+        "premium": {
+          "d_tpot_p99_ms": {
+            "value": null,
+            "status": "n/a"
+          }
+        }
+      },
+      "release": {
+        "recovery_s": {
+          "value": null,
+          "status": "n/a"
+        },
+        "rebound_frac": {
+          "value": null,
+          "status": "n/a"
+        }
+      },
+      "repeat_for_settings": "3-4 values from nvidia-smi -q -d SUPPORTED_CLOCKS"
+    }
+  ],
+  "composition": {
+    "rule": "one lever per pool per event; combined depth is not measured",
+    "exclusive_on_one_gpu": [
+      [
+        "drain_to_parked",
+        "*"
+      ],
+      [
+        "gpu_power_cap",
+        "gpu_clock_lock"
+      ]
+    ],
+    "combined_depth_upper_bound": {
+      "value": "min(sum of depth_frac, busy_frac - parked_frac)",
+      "status": "estimated",
+      "note": "levers overlap: admission lowers load, so a cap may stop binding; depths do not simply add"
+    }
+  },
+  "interpolation": {
+    "key": "at_load.pool_busy_frac",
+    "target_loads_per_entry": 3,
+    "minimum_loads_per_entry": 2,
+    "note": "Update I (29 Oct) will have one load per entry; status records how many exist"
+  }
+}
