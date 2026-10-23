@@ -1,0 +1,26 @@
+# kube-prometheus-stack, trimmed for a laptop kind cluster.
+# fullnameOverride gives short, predictable names: the Prometheus Service is `kps-prometheus`.
+#   helm install kps prometheus-community/kube-prometheus-stack -n monitoring --create-namespace \
+#     -f deploy/prometheus/values-kind.yaml
+fullnameOverride: kps
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 2d
+    # Pick up PodMonitors in any namespace, not only ones labelled with this Helm release.
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 400Mi }
+# Off for now: alerting (Phase 5), Grafana (Phase 5), and scrapers that fail or add noise on kind.
+alertmanager: { enabled: false }
+grafana: { enabled: false }
+nodeExporter: { enabled: false }
+prometheus-node-exporter: { enabled: false }
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+# Default alerting/recording rules are unused for now.
+defaultRules: { create: false }

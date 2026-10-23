@@ -1,0 +1,54 @@
+# Mock serving replicas: one per emulated GPU node.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  namespace: pbo
+  labels: { app: mock-llm }
+spec:
+  replicas: 5
+  selector:
+    matchLabels: { app: mock-llm }
+  template:
+    metadata:
+      labels: { app: mock-llm, pbo.dev/role: mono }
+    spec:
+      nodeSelector: { pbo.dev/gpu: emulated }
+      affinity:
+        # "One GPU per node, one replica per GPU": never put two replicas on one node.
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: { app: mock-llm }
+      containers:
+        - name: server
+          image: pbo:dev
+          command: ["pbo-mockserve", "--port", "8000", "--role", "mono"]
+          env:
+            - name: PBO_EMULATOR_URL
+              value: http://gpu-emulator-local.pbo.svc:9500/state
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          ports:
+            - { name: http, containerPort: 8000 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-llm
+  namespace: pbo
+spec:
+  selector: { app: mock-llm }
+  ports:
+    - { name: http, port: 8000, targetPort: http }

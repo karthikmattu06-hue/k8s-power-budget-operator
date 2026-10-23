@@ -1,0 +1,26 @@
+# Open-loop load generator. Change the rate live with:
+#   kubectl -n pbo port-forward deploy/loadgen 9101 &  curl -XPOST localhost:9101/rate -d '{"rps": 15}'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: pbo
+  labels: { app: loadgen }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: loadgen }
+  template:
+    metadata:
+      labels: { app: loadgen }
+    spec:
+      containers:
+        - name: loadgen
+          image: pbo:dev
+          command: ["pbo-loadgen", "--url", "http://mock-llm.pbo.svc:8000", "--rps", "10",
+                    "--mix", "premium=1,standard=1,flex=1", "--metrics-port", "9101"]
+          ports:
+            - { name: metrics, containerPort: 9101 }
+          resources:
+            requests: { cpu: 200m, memory: 128Mi }
+            limits: { memory: 512Mi }

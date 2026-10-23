@@ -1,0 +1,23 @@
+# Tell Prometheus (installed by kube-prometheus-stack) which pods to scrape.
+# Each one also copies the pod's node name into a `node` label, so queries can say
+# "per node" without joining against Kubernetes metadata.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: pbo
+  namespace: pbo
+spec:
+  selector:
+    matchExpressions:
+      - { key: app, operator: In, values: [mock-llm, gpu-emulator, loadgen] }
+  podMetricsEndpoints:
+    - port: http          # mock-llm
+      interval: 15s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+    - port: metrics       # gpu-emulator and loadgen
+      interval: 15s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node

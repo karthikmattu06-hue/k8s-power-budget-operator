@@ -9,7 +9,7 @@ and why, so you can stop at any point and know where you are.
 # Homebrew, if you don't have it: https://brew.sh
 brew install python@3.12 kind kubectl helm gh
 brew tap hashicorp/tap && brew install hashicorp/tap/terraform   # Terraform left Homebrew core in 2023
-brew install --cask google-cloud-sdk orbstack                    # OrbStack = lightweight Docker for Apple Silicon
+brew install --cask google-cloud-sdk                              # Docker: Docker Desktop (already installed) or OrbStack
 ```
 
 * **kind** runs a whole Kubernetes cluster as Docker containers on your laptop. It needs a
@@ -79,6 +79,34 @@ for the reason, and ask the instructor (below). The project does not stop: phase
 > I can still complete the project on emulated nodes, but one real GPU node lets me validate
 > the power telemetry end to end. Thanks, Karthik
 
+## 5. Run Phase 1 on the Mac (~15 min)
+
+Docker Desktop must be running. Give it at least 4 CPUs and 6 GB RAM (Settings → Resources):
+six kind nodes plus Prometheus is a real cluster.
+
+```bash
+make phase1          # creates the cluster, builds/loads the image, installs Prometheus, deploys
+kubectl -n pbo get pods -o wide     # 5 mock-llm (one per worker), 5 gpu-emulator, 1 loadgen
+make smoke           # ~6 min; ends with "PHASE 1: PASS"
+make prom-ui         # then open http://localhost:9090 and try the queries below
+```
+
+Queries to try (Prometheus → Graph):
+
+| Question | PromQL |
+|---|---|
+| Watts per node | `DCGM_FI_DEV_POWER_USAGE` |
+| Cluster watts | `sum(DCGM_FI_DEV_POWER_USAGE)` |
+| p99 TTFT per node | `histogram_quantile(0.99, sum by (le, node) (rate(vllm:time_to_first_token_seconds_bucket[1m])))` |
+| p99 TTFT per tier (client side) | `histogram_quantile(0.99, sum by (le, tier) (rate(pbo_loadgen_ttft_seconds_bucket[1m])))` |
+| Queue length per node | `vllm:num_requests_waiting` |
+
+Change the load by hand: `kubectl -n pbo port-forward deploy/loadgen 9101 &` then
+`curl -XPOST localhost:9101/rate -d '{"rps": 17}'`. One replica serves about 4 rps before it
+queues, so 5 replicas saturate near 19–20 rps.
+
+Stop everything with `make kind-down` (the cluster uses CPU even when idle).
+
 ## Roadmap
 
 Learn-first items are what to read *before* starting the phase, and where.
@@ -86,7 +114,7 @@ Learn-first items are what to read *before* starting the phase, and where.
 | Phase | Learn first | Build | Done when |
 |---|---|---|---|
 | **0 Setup** | – | this repo, GCP project, budget, quota request | CI green; quota requested |
-| **1 Local cluster** ($0) | Kubernetes basics: Pods, Deployments, Services, Labels ([Learn Kubernetes Basics](https://kubernetes.io/docs/tutorials/kubernetes-basics/), 2–3 h); [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/) (20 min) | kind cluster (1 + 5 nodes); Prometheus via Helm; mock serving pod (latency from the curves, honours `X-Service-Tier`); power-emulator sidecar exposing DCGM-named metrics | PromQL shows watts and p99 per node |
+| **1 Local cluster** ($0) | Kubernetes basics: Pods, Deployments, Services, Labels ([Learn Kubernetes Basics](https://kubernetes.io/docs/tutorials/kubernetes-basics/), 2–3 h); [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/) (20 min) | kind cluster (1 + 5 nodes); Prometheus via Helm; mock serving pod (vLLM API and metric names, honours `X-Service-Tier`); power-emulator **DaemonSet** exposing DCGM-named metrics; open-loop load generator ([ADR-0004](adr/0004-emulated-gpu-nodes.md)) | `make smoke` passes: watts and p99 per node rise with load; a node with no pod drops to parked watts |
 | **2 CRD + operator** ($0) | [Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) (1 h); [kopf](https://kopf.readthedocs.io/): Getting started, Handlers, Timers, Status (2 h) | `PowerBudget` CRD; kopf operator with one lever (replicas); per-node budgets in status | applying a budget drops emulated watts and they recover on expiry |
 | **3 Allocator + levers** ($0) | re-read `studies/stage0/stage0_allocation.py` (its greedy loop is the allocator); [PromQL basics](https://prometheus.io/docs/prometheus/latest/querying/basics/) | merit-order allocator on three tiers; admission proxy (reject/defer); drain; binding vs advisory; event report | uniform vs merit order end to end on kind |
 | **4 GKE + T4** (~$5) | [Terraform GCP tutorial](https://developer.hashicorp.com/terraform/tutorials/gcp-get-started) (2 h); GKE docs: GPU node pools, Spot VMs, DCGM metrics, Managed Prometheus (2 h); vLLM *Deploying with Kubernetes* (1 h) | Terraform: cluster, Spot T4 pool, Spot CPU pool; vLLM on the T4; DCGM → Managed Prometheus | real T4 watts respond to a budget |

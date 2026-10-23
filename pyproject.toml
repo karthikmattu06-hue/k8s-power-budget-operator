@@ -15,8 +15,16 @@ dynamic = ["version"]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
+# serve: the Phase 1 mock serving pod, power emulator and load generator.
+serve = ["aiohttp>=3.9", "prometheus_client>=0.20"]
+# dev pulls in serve so CI type-checks and tests the servers too.
+dev = ["pbo[serve]", "pytest>=8", "ruff>=0.6", "mypy>=1.10"]
 study = ["numpy>=1.26", "scipy>=1.11", "matplotlib>=3.7"]
+
+[project.scripts]
+pbo-mockserve = "pbo.mockserve.server:main"
+pbo-emulator = "pbo.emulator.server:main"
+pbo-loadgen = "pbo.loadgen.main:main"
 
 [tool.hatch.version]
 path = "src/pbo/__init__.py"

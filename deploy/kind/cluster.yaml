@@ -1,0 +1,17 @@
+# Local cluster: 1 control plane + 5 workers, each worker a Docker container.
+# Workers stand in for GPU nodes: 1 "real" + 4 emulated on GKE later; all emulated here.
+#   kind create cluster --name pbo --config deploy/kind/cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+    labels: { pbo.dev/gpu: emulated }
+  - role: worker
+    labels: { pbo.dev/gpu: emulated }
+  - role: worker
+    labels: { pbo.dev/gpu: emulated }
+  - role: worker
+    labels: { pbo.dev/gpu: emulated }
+  - role: worker
+    labels: { pbo.dev/gpu: emulated }

@@ -174,6 +174,9 @@ class CurveBook:
     hardware: Mapping[str, Mapping[str, Any]]
     composition: Mapping[str, Any]
     entries: tuple[LeverEntry, ...]
+    # Power of a GPU in each operating state, as a fraction of its nominal power.
+    # The emulator (Phase 1) uses these so emulated watts match the contract's hardware.
+    states: tuple[Mapping[str, Any], ...] = ()
 
     # -- lookup -------------------------------------------------------------
 
@@ -222,6 +225,17 @@ class CurveBook:
                 if p == lever_a and q in ("*", lever_b):
                     return True
         return False
+
+    def state_frac(self, state: str, pool: str = "any") -> Num:
+        """Power fraction of nominal for an operating state, e.g. ("busy", "decode") -> 0.79.
+
+        A pool-specific row wins over an ``any`` row. Unknown state -> n/a.
+        """
+        rows = [s for s in self.states if s.get("state") == state and s.get("pool") in (pool, "any")]
+        rows.sort(key=lambda s: s.get("pool") != pool)  # exact pool first
+        if not rows:
+            return Num(None, "n/a", f"no state {state}/{pool} in contract")
+        return Num.from_json(rows[0].get("frac"))
 
     def tier_names(self) -> list[str]:
         """Tier names in the contract, e.g. ['premium', 'standard', 'flex']."""
@@ -329,4 +343,5 @@ def load_curves(contract_path: str | Path, overlay_path: str | Path | None = Non
         hardware=hardware,
         composition=contract.get("composition", {}),
         entries=tuple(entries),
+        states=tuple(contract.get("states", [])),
     )

@@ -1,0 +1,45 @@
+# Power emulator: one pod per GPU node (DaemonSet), like NVIDIA's DCGM exporter.
+# It stays on the node when the serving pod leaves, so a node with no work reports parked watts.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: gpu-emulator
+  namespace: pbo
+  labels: { app: gpu-emulator }
+spec:
+  selector:
+    matchLabels: { app: gpu-emulator }
+  template:
+    metadata:
+      labels: { app: gpu-emulator }
+    spec:
+      nodeSelector: { pbo.dev/gpu: emulated }   # only the emulated GPU nodes
+      containers:
+        - name: emulator
+          image: pbo:dev
+          command: ["pbo-emulator", "--port", "9500"]
+          env:
+            # Downward API: Kubernetes fills these in, so each pod knows its node.
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          ports:
+            - { name: metrics, containerPort: 9500 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 48Mi }
+            limits: { memory: 128Mi }
+---
+# Node-local Service: traffic sent to it from a pod only goes to the emulator on the *same*
+# node (internalTrafficPolicy: Local). That is how a serving pod finds "its" GPU's emulator.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-emulator-local
+  namespace: pbo
+spec:
+  selector: { app: gpu-emulator }
+  internalTrafficPolicy: Local
+  ports:
+    - { name: metrics, port: 9500, targetPort: metrics }
