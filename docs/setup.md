@@ -87,7 +87,7 @@ six kind nodes plus Prometheus is a real cluster.
 ```bash
 make phase1          # creates the cluster, builds/loads the image, installs Prometheus, deploys
 kubectl -n pbo get pods -o wide     # 5 mock-llm (one per worker), 5 gpu-emulator, 1 loadgen
-make smoke           # ~6 min; ends with "PHASE 1: PASS"
+make smoke           # ~8 min; ends with "PHASE 1: PASS"
 make prom-ui         # then open http://localhost:9090 and try the queries below
 ```
 
@@ -102,8 +102,10 @@ Queries to try (Prometheus → Graph):
 | Queue length per node | `vllm:num_requests_waiting` |
 
 Change the load by hand: `kubectl -n pbo port-forward deploy/loadgen 9101 &` then
-`curl -XPOST localhost:9101/rate -d '{"rps": 17}'`. One replica serves about 4 rps before it
-queues, so 5 replicas saturate near 19–20 rps.
+`curl -XPOST localhost:9101/rate -d '{"rps": 13}'`. Capacity: a full batch of 16 runs at 30 ms
+per output token, so an average request takes ~4.9 s and one replica serves ~3.3 rps; 5 replicas
+saturate near **16 rps**. Above that the queue grows without bound. The baseline operating point
+is 10 rps (~60 %), where all SLOs hold; `make smoke` checks this.
 
 Stop everything with `make kind-down` (the cluster uses CPU even when idle).
 

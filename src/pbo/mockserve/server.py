@@ -50,9 +50,15 @@ TIERS = ("premium", "standard", "flex")
 DEFAULT_TIER = "standard"
 CHUNK_TOKENS = 8  # tokens per streamed chunk; fewer wake-ups than one event per token
 
-# Bucket edges in seconds. Dense where the SLOs are (TTFT 2 s / 6 s, TPOT 50 ms).
-TTFT_BUCKETS = (0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 15, 20, 30, 60, 120)
-TPOT_BUCKETS = (0.01, 0.015, 0.02, 0.025, 0.03, 0.04, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1)
+# Bucket edges in seconds. Prometheus estimates a percentile by interpolating *inside* a bucket,
+# so a p99 is only as precise as the bucket it lands in. Edges are dense where this model's
+# values actually fall (TTFT 0.03-0.5 s unloaded, TPOT 20-30 ms) and around the SLOs
+# (TTFT 2 s / 6 s, TPOT 50 ms). These are our choice, not vLLM's defaults; only names are copied.
+TTFT_BUCKETS = (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 15, 20, 30, 60, 120)
+TPOT_BUCKETS = (
+    0.01, 0.015, 0.02, 0.0225, 0.025, 0.0275, 0.03, 0.0325, 0.035, 0.04, 0.045, 0.05,
+    0.075, 0.1, 0.15, 0.25, 0.5, 1,
+)  # fmt: skip
 E2E_BUCKETS = (0.5, 1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 60, 120, 300, 600)
 
 

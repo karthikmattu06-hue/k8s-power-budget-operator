@@ -37,7 +37,8 @@ from prometheus_client.exposition import CONTENT_TYPE_LATEST
 log = logging.getLogger("pbo.loadgen")
 
 TIER_HEADER = "X-Service-Tier"
-TTFT_BUCKETS = (0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 15, 20, 30, 60, 120)
+# Same TTFT edges as the mock server, so client and server percentiles are comparable.
+TTFT_BUCKETS = (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 15, 20, 30, 60, 120)
 E2E_BUCKETS = (0.5, 1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 60, 120, 300, 600)
 
 
@@ -117,7 +118,13 @@ class LoadGen:
         stop = time.monotonic() + duration_s if duration_s > 0 else float("inf")
         tasks: set[asyncio.Task[None]] = set()
         # limit=0: no connection-pool cap; the in-flight cap above is the only limit.
-        async with ClientSession(timeout=ClientTimeout(total=900), connector=TCPConnector(limit=0)) as session:
+        # force_close=True: a fresh TCP connection per request. A Kubernetes Service balances
+        # *connections*, not requests; with keep-alive, a few reused connections carry all the
+        # traffic and some replicas get none (seen in the first Phase 1 run: one node idle at
+        # 4 rps). One connection per request makes the Service spread requests evenly. The cost
+        # is a TCP handshake per request, sub-millisecond inside the cluster.
+        connector = TCPConnector(limit=0, force_close=True)
+        async with ClientSession(timeout=ClientTimeout(total=900), connector=connector) as session:
             while time.monotonic() < stop:
                 if self.rps <= 0:
                     await asyncio.sleep(0.5)

@@ -17,3 +17,5 @@ kubeconfig*
 studies/stage0/*.csv
 studies/stage0/*.png
 studies/stage0/*.pdf
+# local test output
+*.log

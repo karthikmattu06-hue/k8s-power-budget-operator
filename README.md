@@ -50,7 +50,7 @@ make stage0    # rerun the Stage 0 study and figures
 
 # local cluster (needs Docker, kind, kubectl, helm)
 make phase1    # kind cluster + image + Prometheus + workloads (~5 min first time)
-make smoke     # acceptance test (~6 min)
+make smoke     # acceptance test (~8 min)
 make prom-ui   # Prometheus at http://localhost:9090
 make kind-down
 ```
