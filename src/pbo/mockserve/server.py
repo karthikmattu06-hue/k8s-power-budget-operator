@@ -306,6 +306,7 @@ def main() -> None:
     ap.add_argument("--max-batch", type=int, default=ServingParams.max_batch)
     ap.add_argument("--emulator-url", default=os.environ.get("PBO_EMULATOR_URL"))
     ap.add_argument("--model-name", default="mock-llm")
+    ap.add_argument("--drain-s", type=float, default=30.0, help="max seconds to finish in-flight requests on shutdown")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     app = make_app(
@@ -317,7 +318,10 @@ def main() -> None:
         pod=os.environ.get("POD_NAME", socket.gethostname()),
         node=os.environ.get("NODE_NAME", socket.gethostname()),
     )
-    web.run_app(app, port=args.port, access_log=None)
+    # Graceful drain: on SIGTERM (Kubernetes deleting the pod) aiohttp stops accepting new
+    # connections, then waits up to ``shutdown_timeout`` for in-flight requests to finish, as
+    # vLLM does. The pod's preStop sleep gives Kubernetes time to stop routing to it first.
+    web.run_app(app, port=args.port, access_log=None, shutdown_timeout=args.drain_s)
 
 
 if __name__ == "__main__":

@@ -3,11 +3,11 @@
 
 Checks, in order:
   1. Every emulated GPU node publishes DCGM_FI_DEV_POWER_USAGE to Prometheus.
-  2. Load ladder below saturation (default 4 -> 10 -> 13 rps, i.e. ~25 / 60 / 80 % of the
+  2. Load ladder below saturation (default 4 -> 8 -> 13 rps, i.e. ~25 / 50 / 80 % of the
      ~16 rps the 5 replicas can serve): mean watts rise (>= 2 %) at every step, and p99 TTFT and
      TPOT are higher at the top step than at the bottom one.
   3. Every node carries traffic at the baseline rate (no replica left idle by load balancing).
-  4. At the baseline rate (default 10 rps) the SLOs hold: premium TTFT p99 < 2 s, standard
+  4. At the baseline rate (default 8 rps) the SLOs hold: premium TTFT p99 < 2 s, standard
      < 6 s, TPOT p99 < 50 ms. This is the operating point Phase 2 starts from.
   5. Removing the serving pod from one node (cordon + delete) drops that node to parked watts.
   6. ...and, at the same request rate, the cluster total falls by > 5 %: concentrating the work
@@ -18,7 +18,7 @@ request (~576 prompt + 160 output tokens) takes ~4.9 s; 16 / 4.9 = ~3.3 rps per 
 ~16 rps for 5. Above that the queue grows without bound and every SLO breaks.
 
 Needs: kubectl pointed at the kind cluster, `make deploy` done. Stdlib only.
-Usage: python3 scripts/smoke_phase1.py [--steps 4,10,13] [--baseline 10] [--hold 120]
+Usage: python3 scripts/smoke_phase1.py [--steps 4,8,13] [--baseline 8] [--hold 120]
 """
 
 from __future__ import annotations
@@ -111,8 +111,8 @@ def mean(d: dict[str, float]) -> float:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--steps", default="4,10,13", help="comma-separated rps ladder, ascending")
-    ap.add_argument("--baseline", type=float, default=10.0, help="rate at which SLOs must hold (one of --steps)")
+    ap.add_argument("--steps", default="4,8,13", help="comma-separated rps ladder, ascending")
+    ap.add_argument("--baseline", type=float, default=8.0, help="rate at which SLOs must hold (one of --steps)")
     ap.add_argument("--hold", type=int, default=120, help="seconds at each rate (>= 2 x the 1 m window)")
     args = ap.parse_args()
     steps = [float(x) for x in args.steps.split(",")]

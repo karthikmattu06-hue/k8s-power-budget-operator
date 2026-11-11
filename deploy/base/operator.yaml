@@ -1,0 +1,109 @@
+# The power-budget operator: one pod, same image, entry point pbo-operator.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pbo-operator
+  namespace: pbo
+---
+# What the operator may do, and nothing more (least privilege).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pbo-operator
+rules:
+  # Its own resource: watch it, write progress annotations, finalizers and status.
+  - apiGroups: [pbo.dev]
+    resources: [powerbudgets]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [pbo.dev]
+    resources: [powerbudgets/status]
+    verbs: [get, patch]
+  # kopf discovers resources and posts Events about what it did.
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [list, watch]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [create]
+  # The lever: find consenting Deployments and change their replica count.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    verbs: [get, patch]
+  # Choosing which pod goes: read pods, set the pod-deletion-cost annotation.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pbo-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pbo-operator
+subjects:
+  - kind: ServiceAccount
+    name: pbo-operator
+    namespace: pbo
+---
+# Read the power-model calibration (ConfigMap pbo-power-model) in its own namespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pbo-operator
+  namespace: pbo
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [pbo-power-model]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pbo-operator
+  namespace: pbo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pbo-operator
+subjects:
+  - kind: ServiceAccount
+    name: pbo-operator
+    namespace: pbo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pbo-operator
+  namespace: pbo
+  labels: { app: pbo-operator }
+spec:
+  replicas: 1                 # exactly one: two operators would both act on the same event
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: pbo-operator }
+  template:
+    metadata:
+      labels: { app: pbo-operator }
+    spec:
+      serviceAccountName: pbo-operator
+      containers:
+        - name: operator
+          image: pbo:dev
+          command: ["pbo-operator"]
+          env:
+            - name: PBO_PROMETHEUS_URL
+              value: http://kps-prometheus.monitoring.svc:9090
+            - name: PBO_ADMISSION_URL
+              value: http://admission.pbo.svc:8080
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }

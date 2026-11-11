@@ -1,0 +1,106 @@
+# PowerBudget: one grid event = one object. Cluster-scoped, because a grid event applies to
+# the whole cluster, not to one namespace.
+#
+#   kubectl get pb            -> phase, target, measured watts
+#   kubectl describe pb <n>   -> status + the operator's Events (actions, phase changes)
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: powerbudgets.pbo.dev
+spec:
+  group: pbo.dev
+  scope: Cluster
+  names:
+    kind: PowerBudget
+    plural: powerbudgets
+    singular: powerbudget
+    shortNames: [pb]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}          # .status is written only through /status (by the operator)
+      additionalPrinterColumns:
+        - { name: Phase, type: string, jsonPath: .status.phase }
+        - { name: Baseline-W, type: number, jsonPath: .status.baselineWatts }
+        - { name: Target-W, type: number, jsonPath: .status.targetWatts }
+        - { name: Measured-W, type: number, jsonPath: .status.measuredWatts }
+        - { name: Margin-W, type: number, jsonPath: .status.effectiveMarginWatts }
+        - { name: Flex-Admit, type: number, jsonPath: .status.flexAdmit }
+        - { name: Replicas, type: integer, jsonPath: .status.replicas }
+        - { name: Shortfall-W, type: number, jsonPath: .status.shortfallWatts }
+        - { name: Age, type: date, jsonPath: .metadata.creationTimestamp }
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [reduction]
+              properties:
+                reduction:
+                  description: How far below the baseline (cluster watts at event start) to go. Exactly one field.
+                  type: object
+                  properties:
+                    watts: { type: number, exclusiveMinimum: true, minimum: 0 }
+                    fraction: { type: number, exclusiveMinimum: true, minimum: 0, exclusiveMaximum: true, maximum: 1 }
+                  minProperties: 1
+                  maxProperties: 1
+                rampSeconds:
+                  description: Deadline to reach the target (deployment window). Default 600.
+                  type: number
+                  minimum: 1
+                holdSeconds:
+                  description: How long to hold once the target is reached (or the ramp deadline passes). Default 900.
+                  type: number
+                  minimum: 0
+                minReplicas:
+                  description: Never scale a consenting Deployment below this. Default 1.
+                  type: integer
+                  minimum: 0
+                scope:
+                  description: Label selector of Deployments whose owners consented to shedding. Default pbo.dev/sheddable=true.
+                  type: string
+                mode:
+                  description: "interval = each interval's average must meet the target (DR settlement); cap = no reading may exceed it."
+                  type: string
+                  enum: [interval, cap]
+                intervalSeconds:
+                  description: Scoring interval for mode=interval. Default 300.
+                  type: number
+                  minimum: 1
+                marginWatts:
+                  description: The planner aims at least this far below the target. Default 30.
+                  type: number
+                  minimum: 0
+                noiseSigmas:
+                  description: "Cap mode: margin is at least this many std devs of single readings (measured at start). Default 3.5."
+                  type: number
+                  minimum: 0
+                policy:
+                  description: "optimizer (default) or ladder (fixed order: all flex first, then replicas; a baseline)."
+                  type: string
+                  enum: [optimizer, ladder]
+                flexAction:
+                  description: What happens to shed flex requests. reject (default) or defer (held, max 600 s).
+                  type: string
+                  enum: [reject, defer]
+                utilizationLimit:
+                  description: Max admitted load / (replicas x capacity); protects premium latency. Default 0.6.
+                  type: number
+                  exclusiveMinimum: true
+                  minimum: 0
+                  maximum: 1
+                replicaCapacityRps:
+                  description: Sustainable requests/s of one replica. Default 3.3.
+                  type: number
+                  exclusiveMinimum: true
+                  minimum: 0
+                sensingLagSeconds:
+                  description: Scrape interval + averaging window, added to each lever's settle time. Default 30.
+                  type: number
+                  minimum: 0
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

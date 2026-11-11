@@ -1,0 +1,43 @@
+# Admission proxy: all client traffic enters here. Premium and standard always pass; flex is
+# admitted, rejected or deferred according to what the operator sets (renewed every 5 s, a 30 s
+# lease). One replica: the operator sets one proxy; several would need the setting fanned out.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admission
+  namespace: pbo
+  labels: { app: admission }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: admission }
+  template:
+    metadata:
+      labels: { app: admission }
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: proxy
+          image: pbo:dev
+          command: ["pbo-admission", "--port", "8080", "--upstream", "http://mock-llm.pbo.svc:8000"]
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "5"] }
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 200m, memory: 96Mi }
+            limits: { memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admission
+  namespace: pbo
+spec:
+  selector: { app: admission }
+  ports:
+    - { name: http, port: 8080, targetPort: http }

@@ -1,0 +1,20 @@
+# Example grid event: shed 100 W below the current draw within 10 minutes, hold for 15 minutes.
+#   kubectl apply -f deploy/examples/powerbudget.yaml
+#   kubectl get pb -w            # watch phase and watts
+#   kubectl describe pb evening-peak
+#   kubectl delete pb evening-peak   # ends the event early; replicas are restored
+apiVersion: pbo.dev/v1alpha1
+kind: PowerBudget
+metadata:
+  name: evening-peak
+spec:
+  reduction:
+    watts: 100          # or: fraction: 0.1  (10 % below baseline)
+  rampSeconds: 600      # deadline to reach the target
+  holdSeconds: 900      # then hold this long
+  minReplicas: 1        # never below this many replicas per consenting Deployment
+  mode: cap             # cap: never exceed the target during the hold; interval: 5-min averages
+  marginWatts: 30       # aim at least this far below the target
+  noiseSigmas: 3.5      # cap mode: margin >= 3.5 x std dev of single readings
+  policy: optimizer     # or ladder (fixed order, kept as a baseline)
+  flexAction: reject    # or defer (requires rampSeconds + holdSeconds <= 600)

@@ -4,7 +4,7 @@ VENV := .venv
 BIN := $(VENV)/bin
 
 .PHONY: help install fmt lint type test check stage0 clean \
-        kind-up image prom deploy phase1 smoke prom-ui kind-down
+        kind-up image prom deploy phase1 smoke calibrate smoke2 prom-ui kind-down
 
 # Phase 1: local kind cluster
 CLUSTER ?= pbo
@@ -54,16 +54,24 @@ prom: ## install Prometheus (kube-prometheus-stack) into the cluster
 	helm upgrade --install kps prometheus-community/kube-prometheus-stack --version $(KPS_VERSION) \
 	  -n monitoring --create-namespace -f deploy/prometheus/values-kind.yaml --wait --timeout 10m
 
-deploy: ## apply the workloads and restart them onto the freshly loaded image
+deploy: ## apply CRD, operator, proxy and workloads, and restart them onto the freshly loaded image
 	kubectl apply -k deploy/base
-	kubectl -n pbo rollout restart deploy/mock-llm deploy/loadgen ds/gpu-emulator
+	kubectl -n pbo rollout restart deploy/mock-llm deploy/admission deploy/loadgen deploy/pbo-operator ds/gpu-emulator
 	kubectl -n pbo rollout status deploy/mock-llm --timeout=180s
 	kubectl -n pbo rollout status ds/gpu-emulator --timeout=180s
+	kubectl -n pbo rollout status deploy/admission --timeout=120s
+	kubectl -n pbo rollout status deploy/pbo-operator --timeout=120s
 
 phase1: kind-up image prom deploy ## all of the above, in order
 
-smoke: ## Phase 1 acceptance test against the running cluster (~6 min)
+smoke: ## Phase 1 acceptance test against the running cluster (~10 min)
 	python3 scripts/smoke_phase1.py
+
+calibrate: ## measure the power curve the operator plans with (~7 min, once per cluster)
+	python3 scripts/calibrate.py
+
+smoke2: ## Phase 2 acceptance test: cap-mode event planned by the optimiser (~20 min)
+	python3 scripts/smoke_phase2.py
 
 prom-ui: ## Prometheus UI at http://localhost:9090 (Ctrl-C to stop)
 	kubectl -n monitoring port-forward svc/kps-prometheus 9090

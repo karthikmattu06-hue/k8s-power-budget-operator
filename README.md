@@ -34,8 +34,13 @@ grid event ──► PowerBudget (CRD) ──► operator ──► per-node bud
 | `src/pbo/mockserve/` | Mock serving replica: vLLM-compatible API and metrics, queueing + clock-aware latency model |
 | `src/pbo/emulator/` | Per-node power emulator (DaemonSet) publishing DCGM-named watts |
 | `src/pbo/loadgen/` | Open-loop Poisson load generator with per-tier latency metrics |
+| `src/pbo/operator/` | kopf operator: `policy.py` (event state machine), `planner.py` (optimiser + ladder baseline), `model.py` (power predictor), `levers.py` (contract adapter), `adapters.py` (Prometheus, Kubernetes, proxy), `main.py` (handlers) |
+| `src/pbo/admission/` | Admission proxy: premium/standard pass, flex admitted/rejected/deferred; 30 s lease |
+| `deploy/examples/powerbudget.yaml` | An example grid event |
 | `docker/`, `deploy/` | Container image; kind cluster config; Kubernetes manifests; Prometheus values |
-| `scripts/smoke_phase1.py` | Phase 1 acceptance test (watts and p99 move with load; idle node parks) |
+| `scripts/smoke_phase1.py` | Phase 1 acceptance test (watts and p99 move with load; idle node parks; consolidation saves power) |
+| `scripts/calibrate.py` | Measures the power curve the operator plans with (ConfigMap `pbo-power-model`) |
+| `scripts/smoke_phase2.py` | Phase 2 acceptance test (cap mode: reach, never exceed, protect premium, release in order) |
 | `curves/` | `lever-curves-v0.3.json` (contract, schema 0.3 rev 2, unchanged copy) and `published-overlay.json` (ours) |
 | `studies/stage0/` | Stage 0 allocation study: uniform vs greedy vs LP vs MIP on a 12-node model |
 | `docs/adr/` | Architecture decision records |
@@ -51,10 +56,12 @@ make stage0    # rerun the Stage 0 study and figures
 # local cluster (needs Docker, kind, kubectl, helm)
 make phase1    # kind cluster + image + Prometheus + workloads (~5 min first time)
 make smoke     # acceptance test (~10 min)
+make calibrate # measure the power curve (~7 min, once per cluster)
+make smoke2    # Phase 2 acceptance test (~20 min)
 make prom-ui   # Prometheus at http://localhost:9090
 make kind-down
 ```
 
 ## Status
 
-Phase 1 (local kind cluster with emulated GPU nodes). See [ADR-0004](docs/adr/0004-emulated-gpu-nodes.md). Roadmap in [docs/setup.md](docs/setup.md#roadmap).
+Phase 2 (PowerBudget CRD, admission proxy, optimiser over flex admission + replicas, cap and interval modes). See ADR-0004 to ADR-0006 in [docs/adr](docs/adr). Roadmap in [docs/setup.md](docs/setup.md#roadmap).

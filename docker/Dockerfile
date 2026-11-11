@@ -1,4 +1,4 @@
-# One image, three programs: pbo-mockserve, pbo-emulator, pbo-loadgen.
+# One image, four programs: pbo-mockserve, pbo-emulator, pbo-loadgen, pbo-operator.
 # The Kubernetes manifests pick which one runs via `command:`.
 #
 # Build:  docker build -f docker/Dockerfile -t pbo:dev .
@@ -13,7 +13,7 @@ WORKDIR /app
 # Copy only what the install needs first, so Docker caches the dependency layer.
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[serve]"
+RUN pip install --no-cache-dir ".[serve,operator]"
 COPY curves ./curves
 
 # Run as an unprivileged user; nothing here needs root.

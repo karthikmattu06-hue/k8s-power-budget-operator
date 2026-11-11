@@ -4,7 +4,9 @@ kind: Deployment
 metadata:
   name: mock-llm
   namespace: pbo
-  labels: { app: mock-llm }
+  # Consent: the owner of this Deployment allows the power-budget operator to change its
+  # replica count during a grid event. In Phase 2 it stands in for a consenting flex pool.
+  labels: { app: mock-llm, pbo.dev/sheddable: "true" }
 spec:
   replicas: 5
   selector:
@@ -21,6 +23,9 @@ spec:
             - topologyKey: kubernetes.io/hostname
               labelSelector:
                 matchLabels: { app: mock-llm }
+      # Graceful drain on scale-down: preStop (5 s) lets Kubernetes stop routing to the pod,
+      # then SIGTERM, then the server finishes in-flight requests (up to 30 s, --drain-s).
+      terminationGracePeriodSeconds: 45
       containers:
         - name: server
           image: pbo:dev
@@ -34,6 +39,9 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: POD_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "5"] }
           ports:
             - { name: http, containerPort: 8000 }
           readinessProbe:

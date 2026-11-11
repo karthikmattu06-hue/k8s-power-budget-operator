@@ -124,6 +124,33 @@ def test_clock_lever_validates_and_applies() -> None:
     run(body)
 
 
+def test_shutdown_drains_in_flight_requests() -> None:
+    """Scale-down must not cut requests mid-stream: shutdown waits for them, refuses new ones."""
+    from aiohttp import ClientConnectorError, ClientSession, web
+
+    async def body() -> None:
+        runner = web.AppRunner(mock.make_app(FAST), shutdown_timeout=30)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        host, port = runner.addresses[0][:2]
+        url = f"http://{host}:{port}/v1/completions"
+        async with ClientSession() as s:
+
+            async def long_request() -> tuple[int, bool]:
+                r = await s.post(url, json={"prompt": "x", "max_tokens": 300, "stream": True})
+                return r.status, (await r.text()).endswith("data: [DONE]\n\n")
+
+            task = asyncio.create_task(long_request())
+            await asyncio.sleep(0.1)  # request is mid-stream
+            await runner.cleanup()  # what SIGTERM triggers
+            assert await task == (200, True)  # finished, not cut
+            with pytest.raises(ClientConnectorError):
+                await s.post(url, json={"prompt": "x"})
+
+    run(body)
+
+
 # -- power emulator ----------------------------------------------------------
 
 

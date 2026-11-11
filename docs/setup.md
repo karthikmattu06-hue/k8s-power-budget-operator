@@ -105,9 +105,37 @@ Change the load by hand: `kubectl -n pbo port-forward deploy/loadgen 9101 &` the
 `curl -XPOST localhost:9101/rate -d '{"rps": 13}'`. Capacity: a full batch of 16 runs at 30 ms
 per output token, so an average request takes ~4.9 s and one replica serves ~3.3 rps; 5 replicas
 saturate near **16 rps**. Above that the queue grows without bound. The baseline operating point
-is 10 rps (~60 %), where all SLOs hold; `make smoke` checks this.
+is **8 rps** (~50 %), where all SLOs hold with margin; `make smoke` checks this. (At 10 rps premium
+p99 TTFT came out 1.25–1.81 s across runs: too close to the 2 s SLO for a reliable baseline.)
 
 Stop everything with `make kind-down` (the cluster uses CPU even when idle).
+
+## 6. Run Phase 2 on the Mac (~30 min)
+
+`make deploy` installs the `PowerBudget` CRD, the operator and the admission proxy (all client
+traffic now enters through it). After `make image deploy`:
+
+```bash
+kubectl -n pbo get pods              # + 1 pbo-operator, 1 admission
+make calibrate                       # ~7 min, once per cluster: measures the power curve the operator plans with
+make smoke2 2>&1 | tee smoke.log     # ~20 min; cap mode, optimiser; ends with "PHASE 2: PASS"
+python3 scripts/smoke_phase2.py --policy ladder 2>&1 | tee ladder.log   # the fixed-order baseline, to compare
+```
+
+Try an event by hand:
+
+```bash
+kubectl apply -f deploy/examples/powerbudget.yaml
+kubectl get pb -w                    # phase, target, measured, flex admit, replicas, shortfall
+kubectl -n pbo logs deploy/pbo-operator -f
+kubectl get pb evening-peak -o jsonpath='{.status.plan}'   # what the optimiser chose and why
+kubectl delete pb evening-peak       # ends the event early; replicas and flex come back
+```
+
+If `kubectl delete pb` hangs, the operator is not running: it holds a finalizer so it can restore
+replicas before the object goes. Start the operator again, or as a last resort
+`kubectl patch pb <name> --type merge -p '{"metadata":{"finalizers":[]}}'`. If the operator dies
+mid-event, the admission proxy readmits flex by itself after 30 s (lease).
 
 ## Roadmap
 
@@ -117,8 +145,8 @@ Learn-first items are what to read *before* starting the phase, and where.
 |---|---|---|---|
 | **0 Setup** | – | this repo, GCP project, budget, quota request | CI green; quota requested |
 | **1 Local cluster** ($0) | Kubernetes basics: Pods, Deployments, Services, Labels ([Learn Kubernetes Basics](https://kubernetes.io/docs/tutorials/kubernetes-basics/), 2–3 h); [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/) (20 min) | kind cluster (1 + 5 nodes); Prometheus via Helm; mock serving pod (vLLM API and metric names, honours `X-Service-Tier`); power-emulator **DaemonSet** exposing DCGM-named metrics; open-loop load generator ([ADR-0004](adr/0004-emulated-gpu-nodes.md)) | `make smoke` passes: watts and p99 per node rise with load; a node with no pod drops to parked watts, and at constant load the cluster total falls when a replica is removed |
-| **2 CRD + operator** ($0) | [Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) (1 h); [kopf](https://kopf.readthedocs.io/): Getting started, Handlers, Timers, Status (2 h) | `PowerBudget` CRD; kopf operator with one lever (replicas); per-node budgets in status | applying a budget drops emulated watts and they recover on expiry |
-| **3 Allocator + levers** ($0) | re-read `studies/stage0/stage0_allocation.py` (its greedy loop is the allocator); [PromQL basics](https://prometheus.io/docs/prometheus/latest/querying/basics/) | merit-order allocator on three tiers; admission proxy (reject/defer); drain; binding vs advisory; event report | uniform vs merit order end to end on kind |
+| **2 CRD + operator** ($0) | [Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) (1 h); [kopf](https://kopf.readthedocs.io/): Getting started, Handlers, Timers, Status (2 h); [RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) (20 min); [pod-deletion-cost](https://kubernetes.io/docs/reference/labels-annotations-taints/#pod-deletion-cost) (10 min) | `PowerBudget` CRD (interval and cap modes); kopf operator, closed loop on measured watts; admission proxy with lease; optimiser over flex admission + replicas with a calibrated power model; ladder baseline; graceful drain ([ADR-0005](adr/0005-powerbudget-operator.md), [ADR-0006](adr/0006-admission-and-optimizer.md)) | `make smoke2` passes in cap mode: target reached in the ramp, no reading above the cap, premium SLO held, release in order, no failed premium/standard requests |
+| **3 Allocator + levers** ($0) | re-read `studies/stage0/stage0_allocation.py` (its greedy loop is the allocator); [PromQL basics](https://prometheus.io/docs/prometheus/latest/querying/basics/) | allocation across pools (prefill/decode) and per-tier admission rates; drain; event report; ladder vs uniform vs optimiser | uniform vs merit order end to end on kind |
 | **4 GKE + T4** (~$5) | [Terraform GCP tutorial](https://developer.hashicorp.com/terraform/tutorials/gcp-get-started) (2 h); GKE docs: GPU node pools, Spot VMs, DCGM metrics, Managed Prometheus (2 h); vLLM *Deploying with Kubernetes* (1 h) | Terraform: cluster, Spot T4 pool, Spot CPU pool; vLLM on the T4; DCGM → Managed Prometheus | real T4 watts respond to a budget |
 | **5 Grid + SLO guard** (~$2) | Grafana alerting + webhooks; Pub/Sub Python client | price/emergency replay → Pub/Sub → `PowerBudget`; burn-rate alert → back-off | a replayed event runs hands-off |
 | **6 Experiments + report** (~$20) | – | policy × depth × trace × tier-mix matrix; figures; USENIX report | time to depth and hold accuracy per policy |

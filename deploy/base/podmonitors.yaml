@@ -1,6 +1,7 @@
 # Tell Prometheus (installed by kube-prometheus-stack) which pods to scrape.
 # Each one also copies the pod's node name into a `node` label, so queries can say
 # "per node" without joining against Kubernetes metadata.
+# Every 5 s: cap mode must see short power spikes, and the operator ticks every 5 s.
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -9,15 +10,15 @@ metadata:
 spec:
   selector:
     matchExpressions:
-      - { key: app, operator: In, values: [mock-llm, gpu-emulator, loadgen] }
+      - { key: app, operator: In, values: [mock-llm, gpu-emulator, loadgen, admission] }
   podMetricsEndpoints:
-    - port: http          # mock-llm
-      interval: 15s
+    - port: http          # mock-llm and admission
+      interval: 5s
       relabelings:
         - sourceLabels: [__meta_kubernetes_pod_node_name]
           targetLabel: node
     - port: metrics       # gpu-emulator and loadgen
-      interval: 15s
+      interval: 5s
       relabelings:
         - sourceLabels: [__meta_kubernetes_pod_node_name]
           targetLabel: node

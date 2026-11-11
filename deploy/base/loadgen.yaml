@@ -1,4 +1,4 @@
-# Open-loop load generator. Change the rate live with:
+# Open-loop load generator. Sends through the admission proxy, like real clients would. Change the rate live with:
 #   kubectl -n pbo port-forward deploy/loadgen 9101 &  curl -XPOST localhost:9101/rate -d '{"rps": 15}'
 apiVersion: apps/v1
 kind: Deployment
@@ -17,7 +17,7 @@ spec:
       containers:
         - name: loadgen
           image: pbo:dev
-          command: ["pbo-loadgen", "--url", "http://mock-llm.pbo.svc:8000", "--rps", "10",
+          command: ["pbo-loadgen", "--url", "http://admission.pbo.svc:8080", "--rps", "8",
                     "--mix", "premium=1,standard=1,flex=1", "--metrics-port", "9101"]
           ports:
             - { name: metrics, containerPort: 9101 }
