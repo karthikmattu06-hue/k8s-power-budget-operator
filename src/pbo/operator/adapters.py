@@ -30,7 +30,10 @@ DELETION_COST = "controller.kubernetes.io/pod-deletion-cost"
 
 # Decisions use a 20 s average (4 scrapes at 5 s): long enough to smooth noise, short enough to
 # react. Compliance and spike learning use the latest scrape.
-CLUSTER_W = "sum(avg_over_time(DCGM_FI_DEV_POWER_USAGE[20s]))"
+# Sum first, then average (a subquery at the 5 s scrape step). The other order,
+# sum(avg_over_time(...)), double-counts a node for up to 20 s after its pod changes: the series
+# carry a pod label, so the old and new series overlap inside the window.
+CLUSTER_W = "avg_over_time(sum(DCGM_FI_DEV_POWER_USAGE)[20s:5s])"
 INSTANT_W = "sum(DCGM_FI_DEV_POWER_USAGE)"
 NODES = "count(DCGM_FI_DEV_POWER_USAGE)"
 # Scatter of single cluster readings over the last 2 min (a subquery evaluated at the 5 s scrape step).

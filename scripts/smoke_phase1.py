@@ -83,7 +83,7 @@ def verdict(ok: bool) -> str:
 # All windows are 1 minute; each step holds >= 2 minutes so the window sees only that step.
 WATTS = "avg by (node) (avg_over_time(DCGM_FI_DEV_POWER_USAGE[1m]))"
 SERVER_P99 = "histogram_quantile(0.99, sum by (le{by}) (rate(vllm:{m}_bucket[1m])))"
-CLUSTER_W = "sum(avg_over_time(DCGM_FI_DEV_POWER_USAGE[30s]))"
+CLUSTER_W = "avg_over_time(sum(DCGM_FI_DEV_POWER_USAGE)[30s:5s])"  # sum first, then average
 CLIENT_TTFT_P99 = "histogram_quantile(0.99, sum by (le, tier) (rate(pbo_loadgen_ttft_seconds_bucket[1m])))"
 
 

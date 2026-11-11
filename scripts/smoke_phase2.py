@@ -32,7 +32,7 @@ from _kit import cluster_ports, deployment, kubectl, results, scalar, series, se
 
 NAME = "smoke-event"
 INSTANT_W = "sum(DCGM_FI_DEV_POWER_USAGE)"
-SHORT_W = "sum(avg_over_time(DCGM_FI_DEV_POWER_USAGE[20s]))"
+SHORT_W = "avg_over_time(sum(DCGM_FI_DEV_POWER_USAGE)[20s:5s])"  # sum first: see adapters.CLUSTER_W
 OUTCOMES = "sum by (tier, outcome) (pbo_loadgen_requests_total)"
 P99 = 'histogram_quantile(0.99, sum by (le) (increase(pbo_loadgen_ttft_seconds_bucket{{tier="{tier}"}}[{w}s])))'
 

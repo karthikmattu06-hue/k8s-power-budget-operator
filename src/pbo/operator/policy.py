@@ -27,8 +27,8 @@ Two ways an obligation can be scored (``mode``)
 * ``interval`` -- demand-response settlement: each metered interval's *average* must be at or
   below target (5 min here; markets use 15 or 60, and every aligned 5-min pass implies those).
 * ``cap`` -- a hard limit: no reading may exceed the target during the hold. Removing a replica
-  makes power *rise* for ~20-30 s (the draining pod still serves while the others take its load),
-  so in cap mode a replica move is allowed during the hold only if ``reading + spike estimate``
+  can raise power briefly (the draining pod still serves while the others take its load; small,
+  0-5 W measured), so in cap mode a replica move is allowed during the hold only if ``reading + spike estimate``
   stays under the cap, and during the ramp only if it will have settled before the deadline.
   Admission changes have no spike and are always allowed. The spike estimate is learned from
   the operator's own past removals.

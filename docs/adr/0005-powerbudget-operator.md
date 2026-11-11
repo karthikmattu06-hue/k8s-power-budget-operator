@@ -9,8 +9,13 @@ established:
 
 * Removing one of five replicas at constant load saved the cluster 72 W while that GPU alone
   dropped ~135 W: the remaining replicas absorb its work. Per-GPU depth over-predicts.
-* Removing a replica makes cluster power **rise** for ~20–30 s before it falls (880 W against an
-  848 W baseline): the draining pod keeps serving while the others take its new load.
+* Removing a replica raises cluster power slightly for a few seconds before it falls: the
+  draining pod finishes its in-flight requests while the others take its new load. Measured on
+  single 5-s readings this is small (0–5 W in the 11 Nov runs). The much larger jumps first
+  seen in the 20–30-s averages (880 W against an 848 W baseline) were a **measurement artifact**:
+  the emulator's power series carry a `pod` label, so after a pod is removed the old and new
+  series overlap inside the window and `sum(avg_over_time(...))` counts that node twice.
+  Aggregate first, then average: `avg_over_time(sum(...)[20s:5s])`.
 * Prometheus sees a change only after the emulator's stale timeout, a scrape and an averaging
   window. A reading taken mid-transition can show a dip that is not real (the first run
   declared "target reached" on one).
@@ -35,9 +40,17 @@ established:
 * **5-minute scoring for `interval`.** The shortest settlement interval in use; if every aligned
   5-min average complies, every 15-min and hourly one does too.
 * **Cap mode.** A replica move is allowed during the hold only if the latest reading plus the
-  learned removal spike stays under the cap, and during the ramp only if it will have settled
+  removal spike estimate stays under the cap, and during the ramp only if it will have settled
   before the deadline. Admission changes have no spike and are always allowed. The spike is
-  learned from the operator's own removals (default 50 W until one is measured).
+  learned from the operator's own removals: peak single reading after the move minus the 20-s
+  average before it; the estimate keeps the largest seen and never drops below 50 W (a
+  deliberately conservative floor, well above the 0–5 W measured).
+* **Cap margin covers sensor noise.** A cap is judged on single 5-s readings, which scatter
+  around the 20-s average the planner sees (std dev 22–32 W in the 11 Nov runs). At event start
+  the operator reads the std dev of single readings over the past 2 min and uses
+  `margin = max(marginWatts, noiseSigmas × std dev)` (default 3.5), frozen for the event.
+  The first cap run, with a fixed 30 W margin and a spike wrongly learned as 0 W against a single
+  high reading, crossed the cap by 10 W for 10 s after a removal made during the hold.
 * **Consent and authority.** Only Deployments labelled `pbo.dev/sheddable=true`, never below
   `minReplicas`; only flex requests are shed; only levers the contract marks `operator`.
   When the target cannot be met within these, the gap is reported (`shortfallWatts`).
