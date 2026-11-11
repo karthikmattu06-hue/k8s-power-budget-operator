@@ -132,7 +132,7 @@ def test_emulator_publishes_dcgm_watts_and_parks_when_stale() -> None:
         c = await _client(emu.make_app(PowerParams(), node="worker-1", stale_s=0.2))
         m = await (await c.get("/metrics")).text()
         assert metric(m, "DCGM_FI_DEV_POWER_USAGE", Hostname="worker-1", pod="") == pytest.approx(42.5)
-        await c.post("/state", json={"pod": "p1", "role": "mono", "busy_frac": 1.0, "clock_ratio": 1.0})
+        await c.post("/state", json={"pod": "p1", "role": "mono", "duty": 1.0, "fill": 1.0, "clock_ratio": 1.0})
         m = await (await c.get("/metrics")).text()
         assert metric(m, "DCGM_FI_DEV_POWER_USAGE", pod="p1") == pytest.approx(210.0)
         await asyncio.sleep(0.3)  # pod goes quiet
@@ -144,7 +144,7 @@ def test_emulator_publishes_dcgm_watts_and_parks_when_stale() -> None:
     run(body)
 
 
-def test_mock_reports_busy_fraction_to_emulator() -> None:
+def test_mock_reports_occupancy_to_emulator() -> None:
     async def body() -> None:
         e = await _client(emu.make_app(PowerParams(), node="n1"))
         url = str(e.make_url("/state"))

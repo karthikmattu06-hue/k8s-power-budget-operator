@@ -20,6 +20,7 @@ response (queueing, clock sensitivity), which the operator's control loop reacts
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 ROLES = ("prefill", "decode", "mono")
 
@@ -68,13 +69,25 @@ def tpot_seconds(active: int, clock_ratio: float, p: ServingParams) -> float:
     return p.tpot_base_s * (1.0 + p.tpot_batch_slope * fill) * decode_clock_factor(clock_ratio, p)
 
 
+class Occupancy(NamedTuple):
+    """How the GPU was used over one sampling window (both in [0, 1])."""
+
+    duty: float  # fraction of time at least one request was running (what DCGM calls GPU utilisation)
+    fill: float  # time-averaged share of batch slots in use (8 of 16 slots all window -> 0.5)
+
+
 class BusyTracker:
-    """Time-weighted average of how full the batch was since the last ``sample()``.
+    """Measures :class:`Occupancy` since the last ``sample()``.
 
-    "Busy fraction" is what the power emulator needs: a GPU running 8 of 16 slots
-    for the whole second is 0.5 busy. Instantaneous counts jump around, so we
-    integrate ``active`` over time and divide by elapsed time.
+    The power emulator needs two numbers, not one:
 
+    * **duty** -- was the GPU running *anything*? Decode is memory-bound: every step reads all
+      the model weights from GPU memory whether the batch holds 1 request or 16, so most of
+      the power is spent just by running steps at all.
+    * **fill** -- how full was the batch? Extra requests add their own KV-cache reads and
+      compute, so power still rises with fill, just less steeply.
+
+    Instantaneous counts jump around, so both are time integrals divided by elapsed time.
     Time is passed in (``now``) rather than read from a clock so tests are exact.
     """
 
@@ -83,14 +96,18 @@ class BusyTracker:
         self._active = 0
         self._last_change = now  # when ``_active`` last changed
         self._window_start = now  # start of the current averaging window
-        self._area = 0.0  # integral of active-slots x seconds in this window
+        self._slot_area = 0.0  # integral of active-slots x seconds in this window
+        self._run_time = 0.0  # seconds in this window with >= 1 request active
 
     @property
     def active(self) -> int:
         return self._active
 
     def _advance(self, now: float) -> None:
-        self._area += self._active * max(now - self._last_change, 0.0)
+        dt = max(now - self._last_change, 0.0)
+        self._slot_area += self._active * dt
+        if self._active > 0:
+            self._run_time += dt
         self._last_change = now
 
     def change(self, delta: int, now: float) -> None:
@@ -98,11 +115,14 @@ class BusyTracker:
         self._advance(now)
         self._active = max(self._active + delta, 0)
 
-    def sample(self, now: float) -> float:
-        """Busy fraction in [0, 1] since the previous sample; starts a new window."""
+    def sample(self, now: float) -> Occupancy:
+        """Occupancy since the previous sample; starts a new window."""
         self._advance(now)
         elapsed = now - self._window_start
-        frac = self._active / self._max_batch if elapsed <= 0 else self._area / (elapsed * self._max_batch)
+        if elapsed <= 0:  # zero-length window: report the current state
+            duty, fill = float(self._active > 0), self._active / self._max_batch
+        else:
+            duty, fill = self._run_time / elapsed, self._slot_area / (elapsed * self._max_batch)
         self._window_start = now
-        self._area = 0.0
-        return min(max(frac, 0.0), 1.0)
+        self._slot_area = self._run_time = 0.0
+        return Occupancy(duty=min(max(duty, 0.0), 1.0), fill=min(max(fill, 0.0), 1.0))

@@ -41,7 +41,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 from prometheus_client.exposition import CONTENT_TYPE_LATEST
 
-from pbo.mockserve.model import ROLES, BusyTracker, ServingParams, prefill_seconds, tpot_seconds
+from pbo.mockserve.model import ROLES, BusyTracker, Occupancy, ServingParams, prefill_seconds, tpot_seconds
 
 log = logging.getLogger("pbo.mockserve")
 
@@ -96,7 +96,7 @@ class Replica:
     waiting: int = 0
     slots: asyncio.Semaphore = field(init=False)
     busy: BusyTracker = field(init=False)
-    last_busy_frac: float = 0.0
+    last: Occupancy = field(default_factory=lambda: Occupancy(0.0, 0.0))  # latest 1-s sample
 
     def __post_init__(self) -> None:
         if self.role not in ROLES:
@@ -111,7 +111,8 @@ class Replica:
             "node": self.node,
             "namespace": os.environ.get("POD_NAMESPACE", ""),
             "role": self.role,
-            "busy_frac": round(self.last_busy_frac, 4),
+            "duty": round(self.last.duty, 4),
+            "fill": round(self.last.fill, 4),
             "clock_ratio": self.clock_ratio,
             "running": self.busy.active,
             "waiting": self.waiting,
@@ -247,7 +248,7 @@ async def admin_lever(request: web.Request) -> web.Response:
 
 
 async def _report_loop(app: web.Application) -> AsyncIterator[None]:
-    """Background task: every ``report_s`` seconds, sample busy fraction and POST it to the emulator."""
+    """Background task: every ``report_s`` seconds, sample occupancy (duty, fill) and POST it to the emulator."""
     rep = app[REPLICA_KEY]
     url = app[EMULATOR_URL_KEY]
     period: float = app[REPORT_S_KEY]
@@ -256,7 +257,7 @@ async def _report_loop(app: web.Application) -> AsyncIterator[None]:
         async with ClientSession(timeout=ClientTimeout(total=period)) as session:
             while True:
                 await asyncio.sleep(period)
-                rep.last_busy_frac = rep.busy.sample(time.monotonic())
+                rep.last = rep.busy.sample(time.monotonic())
                 if not url:
                     continue
                 try:

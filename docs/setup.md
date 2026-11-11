@@ -87,7 +87,7 @@ six kind nodes plus Prometheus is a real cluster.
 ```bash
 make phase1          # creates the cluster, builds/loads the image, installs Prometheus, deploys
 kubectl -n pbo get pods -o wide     # 5 mock-llm (one per worker), 5 gpu-emulator, 1 loadgen
-make smoke           # ~8 min; ends with "PHASE 1: PASS"
+make smoke           # ~10 min; ends with "PHASE 1: PASS"
 make prom-ui         # then open http://localhost:9090 and try the queries below
 ```
 
@@ -116,7 +116,7 @@ Learn-first items are what to read *before* starting the phase, and where.
 | Phase | Learn first | Build | Done when |
 |---|---|---|---|
 | **0 Setup** | – | this repo, GCP project, budget, quota request | CI green; quota requested |
-| **1 Local cluster** ($0) | Kubernetes basics: Pods, Deployments, Services, Labels ([Learn Kubernetes Basics](https://kubernetes.io/docs/tutorials/kubernetes-basics/), 2–3 h); [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/) (20 min) | kind cluster (1 + 5 nodes); Prometheus via Helm; mock serving pod (vLLM API and metric names, honours `X-Service-Tier`); power-emulator **DaemonSet** exposing DCGM-named metrics; open-loop load generator ([ADR-0004](adr/0004-emulated-gpu-nodes.md)) | `make smoke` passes: watts and p99 per node rise with load; a node with no pod drops to parked watts |
+| **1 Local cluster** ($0) | Kubernetes basics: Pods, Deployments, Services, Labels ([Learn Kubernetes Basics](https://kubernetes.io/docs/tutorials/kubernetes-basics/), 2–3 h); [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/) (20 min) | kind cluster (1 + 5 nodes); Prometheus via Helm; mock serving pod (vLLM API and metric names, honours `X-Service-Tier`); power-emulator **DaemonSet** exposing DCGM-named metrics; open-loop load generator ([ADR-0004](adr/0004-emulated-gpu-nodes.md)) | `make smoke` passes: watts and p99 per node rise with load; a node with no pod drops to parked watts, and at constant load the cluster total falls when a replica is removed |
 | **2 CRD + operator** ($0) | [Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) (1 h); [kopf](https://kopf.readthedocs.io/): Getting started, Handlers, Timers, Status (2 h) | `PowerBudget` CRD; kopf operator with one lever (replicas); per-node budgets in status | applying a budget drops emulated watts and they recover on expiry |
 | **3 Allocator + levers** ($0) | re-read `studies/stage0/stage0_allocation.py` (its greedy loop is the allocator); [PromQL basics](https://prometheus.io/docs/prometheus/latest/querying/basics/) | merit-order allocator on three tiers; admission proxy (reject/defer); drain; binding vs advisory; event report | uniform vs merit order end to end on kind |
 | **4 GKE + T4** (~$5) | [Terraform GCP tutorial](https://developer.hashicorp.com/terraform/tutorials/gcp-get-started) (2 h); GKE docs: GPU node pools, Spot VMs, DCGM metrics, Managed Prometheus (2 h); vLLM *Deploying with Kubernetes* (1 h) | Terraform: cluster, Spot T4 pool, Spot CPU pool; vLLM on the T4; DCGM → Managed Prometheus | real T4 watts respond to a budget |

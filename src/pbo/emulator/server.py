@@ -4,7 +4,7 @@ On a real GPU node, the DCGM exporter (also a DaemonSet) reads the GPU's power s
 publishes ``DCGM_FI_DEV_POWER_USAGE`` for Prometheus. Our emulated nodes have no GPU, so
 this process plays that role:
 
-1. The serving pod on this node POSTs its state (busy fraction, clock, role) to
+1. The serving pod on this node POSTs its state (duty, batch fill, clock, role) to
    ``/state`` every second, through a node-local Service so it always reaches *this* node's
    emulator.
 2. On every Prometheus scrape of ``/metrics``, the emulator turns the latest state into watts
@@ -49,7 +49,8 @@ class Report:
     pod: str
     namespace: str
     role: str
-    busy_frac: float
+    duty: float  # share of time any request ran
+    fill: float  # share of batch slots in use
     clock_ratio: float
     at: float  # time.monotonic() when received
 
@@ -76,7 +77,8 @@ class GpuEmulator(Collector):
             pod=str(body.get("pod", "")),
             namespace=str(body.get("namespace", os.environ.get("POD_NAMESPACE", ""))),
             role=str(body.get("role", "mono")),
-            busy_frac=float(body.get("busy_frac", 0.0)),
+            duty=float(body.get("duty", 0.0)),
+            fill=float(body.get("fill", 0.0)),
             clock_ratio=float(body.get("clock_ratio", 1.0)),
             at=now,
         )
@@ -89,8 +91,8 @@ class GpuEmulator(Collector):
     def watts(self, now: float) -> float:
         r = self.live(now)
         if r is None:
-            return gpu_watts(self.params, None, 0.0, 1.0)
-        return gpu_watts(self.params, r.role, r.busy_frac, r.clock_ratio)
+            return gpu_watts(self.params, None, 0.0, 0.0, 1.0)
+        return gpu_watts(self.params, r.role, r.duty, r.fill, r.clock_ratio)
 
     def _integrate(self, now: float) -> None:
         # Energy = power x time. Piecewise-constant power between events is accurate enough.
@@ -111,7 +113,10 @@ class GpuEmulator(Collector):
             return g
 
         yield gauge("DCGM_FI_DEV_POWER_USAGE", "Power draw (in W).", self.watts(now))
-        yield gauge("DCGM_FI_DEV_GPU_UTIL", "GPU utilization (in %).", 100.0 * (r.busy_frac if r else 0.0))
+        # DCGM's GPU_UTIL is the share of time a kernel was running, i.e. duty, not batch fill.
+        yield gauge("DCGM_FI_DEV_GPU_UTIL", "GPU utilization (in %).", 100.0 * (r.duty if r else 0.0))
+        # Not a DCGM metric: batch fill, which real exporters cannot see (vLLM reports it as running/max).
+        yield gauge("pbo_batch_fill", "Share of batch slots in use (0-1).", r.fill if r else 0.0)
         clock = r.clock_ratio if r else 1.0
         yield gauge("DCGM_FI_DEV_SM_CLOCK", "SM clock frequency (in MHz).", clock * self.params.max_sm_clock_mhz)
         # DCGM reports energy in millijoules as a monotonically increasing value.
@@ -162,11 +167,19 @@ def main() -> None:
     ap.add_argument("--curves", default=os.environ.get("PBO_CURVES", "curves/lever-curves-v0.3.json"))
     ap.add_argument("--nominal-w", type=float, default=250.0)
     ap.add_argument("--stale-s", type=float, default=3.0)
+    ap.add_argument(
+        "--batch-independent-frac", type=float, default=0.6, help="w: share of dynamic power independent of batch"
+    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    params = PowerParams.from_curvebook(load_curves(args.curves), nominal_w=args.nominal_w)
+    params = PowerParams.from_curvebook(
+        load_curves(args.curves), nominal_w=args.nominal_w, batch_independent_frac=args.batch_independent_frac
+    )
     node = os.environ.get("NODE_NAME", socket.gethostname())
-    log.info("node=%s parked=%.1f W busy=%s", node, params.parked_w, dict(params.busy_frac_by_role))
+    log.info(
+        "node=%s parked=%.1f W busy=%s w=%.2f",
+        node, params.parked_w, dict(params.busy_frac_by_role), params.batch_independent_frac,
+    )  # fmt: skip
     web.run_app(make_app(params, node, args.stale_s), port=args.port, access_log=None)
 
 
