@@ -28,6 +28,7 @@ spec:
         - { name: Measured-W, type: number, jsonPath: .status.measuredWatts }
         - { name: Margin-W, type: number, jsonPath: .status.effectiveMarginWatts }
         - { name: Flex-Admit, type: number, jsonPath: .status.flexAdmit }
+        - { name: Clock, type: number, jsonPath: .status.clockRatio }
         - { name: Replicas, type: integer, jsonPath: .status.replicas }
         - { name: Shortfall-W, type: number, jsonPath: .status.shortfallWatts }
         - { name: Age, type: date, jsonPath: .metadata.creationTimestamp }
@@ -79,9 +80,12 @@ spec:
                   type: number
                   minimum: 0
                 policy:
-                  description: "optimizer (default) or ladder (fixed order: all flex first, then replicas; a baseline)."
+                  description: "optimizer (default); ladder (fixed order: all flex first, then replicas); uniform (every GPU's clock down equally; needs allowRoot). The last two are baselines."
                   type: string
-                  enum: [optimizer, ladder]
+                  enum: [optimizer, ladder, uniform]
+                allowRoot:
+                  description: May the operator use root levers (GPU clock)? Only when it owns the hardware. Default false.
+                  type: boolean
                 flexAction:
                   description: What happens to shed flex requests. reject (default) or defer (held, max 600 s).
                   type: string

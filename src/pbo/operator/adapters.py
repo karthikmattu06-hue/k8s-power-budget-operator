@@ -20,7 +20,7 @@ from typing import Any
 from kubernetes import client, config
 
 from pbo.operator.planner import Load
-from pbo.operator.policy import Action, Pool, Replica, Restore, ScaleDown, SetAdmission
+from pbo.operator.policy import Action, Pool, Replica, Restore, ScaleDown, SetAdmission, SetClock
 
 log = logging.getLogger("pbo.operator")
 
@@ -36,8 +36,13 @@ DELETION_COST = "controller.kubernetes.io/pod-deletion-cost"
 CLUSTER_W = "avg_over_time(sum(DCGM_FI_DEV_POWER_USAGE)[20s:5s])"
 INSTANT_W = "sum(DCGM_FI_DEV_POWER_USAGE)"
 NODES = "count(DCGM_FI_DEV_POWER_USAGE)"
-# Scatter of single cluster readings over the last 2 min (a subquery evaluated at the 5 s scrape step).
-NOISE_W = "stddev_over_time(sum(DCGM_FI_DEV_POWER_USAGE)[2m:5s])"
+# Scatter of single readings *around the 20 s average* over the last 2 min. That is what the cap
+# margin must cover: the planner predicts the average, the cap judges single readings. (The
+# first version took the plain std dev of readings, which also counts slow drift of the load:
+# 37 W against ~17 W of real scatter, a 131 W margin and an unreachable aim.)
+NOISE_W = (
+    "stddev_over_time((sum(DCGM_FI_DEV_POWER_USAGE) - avg_over_time(sum(DCGM_FI_DEV_POWER_USAGE)[20s:5s]))[2m:5s])"
+)
 FILL_BY_NODE = "avg by (node) (avg_over_time(pbo_batch_fill[20s]))"
 # Offered load = everything that *arrives* at the proxy, whatever is then decided for it.
 OFFERED_BY_TIER = "sum by (tier) (rate(pbo_admission_arrivals_total[1m]))"
@@ -129,7 +134,8 @@ class Kube:
                 if p.metadata.deletion_timestamp is not None or not p.spec.node_name:
                     continue  # terminating, or not yet placed on a node
                 node = str(p.spec.node_name)
-                pods.append(Replica(str(p.metadata.name), node, fill_by_node.get(node)))
+                ip = p.status.pod_ip if p.status else None
+                pods.append(Replica(str(p.metadata.name), node, fill_by_node.get(node), ip))
             ready = int((d.status.ready_replicas if d.status else 0) or 0)
             out.append(Pool(f"{ns}/{name}", int(d.spec.replicas or 0), ready, tuple(pods)))
         return tuple(out)
@@ -185,8 +191,36 @@ class AdmissionClient:
             return False
 
 
+def set_clock(action: SetClock, kube: Kube, port: int = 8000, timeout_s: float = 3.0) -> int:
+    """POST the clock ratio to every running replica of the pool (the mock's emulated GPU clock).
+
+    On real GPUs this becomes a call to a privileged per-node agent (Phase 4). Returns how many
+    replicas accepted it.
+    """
+    ns, name = action.pool.split("/", 1)
+    d = kube.apps.read_namespaced_deployment(name, ns)
+    match = (d.spec.selector.match_labels if d.spec else None) or {}
+    sel = ",".join(f"{k}={v}" for k, v in sorted(match.items()))
+    ok = 0
+    data = json.dumps({"clock_ratio": action.clock_ratio}).encode()
+    for p in kube.core.list_namespaced_pod(ns, label_selector=sel).items:
+        ip = p.status.pod_ip if p.status else None
+        if not ip or (p.metadata and p.metadata.deletion_timestamp):
+            continue
+        req = urllib.request.Request(f"http://{ip}:{port}/admin/lever", data=data, method="POST",
+                                     headers={"Content-Type": "application/json"})  # fmt: skip
+        try:
+            urllib.request.urlopen(req, timeout=timeout_s).read()
+            ok += 1
+        except Exception as e:
+            log.warning("clock lever on %s failed: %s", ip, e)
+    return ok
+
+
 def carry_out(action: Action, kube: Kube, adm: AdmissionClient) -> None:
     if isinstance(action, SetAdmission):
         adm.set(action)
+    elif isinstance(action, SetClock):
+        set_clock(action, kube)
     else:
         kube.apply(action)

@@ -116,6 +116,10 @@ def tick(spec: kopf.Spec, status: kopf.Status, patch: kopf.Patch, body: kopf.Bod
     level = policy.admission_level(new)
     if level is not None:
         _adm.set(policy.SetAdmission(level, sp.flex_action))
+    clock = policy.clock_level(new)  # uniform policy: keep every replica at the event's clock
+    if clock is not None:
+        for key in new.original:
+            carry_out(policy.SetClock(key, clock), k, _adm)
     if new.phase != st.phase:
         kopf.info(body, reason=new.phase, message=new.message)
     patch.status.update(new.to_k8s())

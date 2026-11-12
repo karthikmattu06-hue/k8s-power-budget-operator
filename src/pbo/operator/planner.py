@@ -4,7 +4,7 @@ The decision, stated as an optimisation problem
 -----------------------------------------------
 Two knobs in Phase 2:
 
-* ``flex_admit`` -- share of flex requests let through (1, 0.75, 0.5, 0.25, 0). Only flex
+* ``flex_admit`` -- share of flex requests let through (1.0, 0.9, ..., 0). Only flex
   consented to be shed (ADR-0001), so premium and standard are never touched.
 * ``replicas`` -- serving replicas of the consenting pool; each one removed parks a GPU.
 
@@ -20,7 +20,7 @@ Why these terms
   as the remaining replicas keep up -- which is what the utilisation constraint guards (Phase 1:
   premium p99 TTFT held at ~50 % utilisation and got marginal near 60 %). The small replica term
   only breaks ties toward fewer disruptions.
-* The search is exhaustive: 5 admit levels x at most a handful of replica counts. No solver
+* The search is exhaustive: 11 admit levels x at most a handful of replica counts. No solver
   needed; every candidate is checked, so the answer is the true optimum *of the model*.
 
 Order of execution falls out instead of being written down: shedding flex lowers utilisation and
@@ -40,7 +40,9 @@ from dataclasses import dataclass
 
 from pbo.operator.model import PowerModel
 
-ADMIT_LEVELS = (1.0, 0.75, 0.5, 0.25, 0.0)
+# Flex admit levels the search tries: 1.0, 0.9, ..., 0.0. Finer steps shed less flex than needed
+# (0.25 steps overshot in the 11 Nov interval run); 11 levels x a few replica counts is still tiny.
+ADMIT_LEVELS = tuple(round(1.0 - i / 10, 1) for i in range(11))
 REPLICA_COST = 0.05  # in "flex req/s shed" units: a tie-breaker, not a real price
 
 

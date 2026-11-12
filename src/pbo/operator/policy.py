@@ -74,7 +74,8 @@ class Spec:
     ramp_s: float = 600.0
     hold_s: float = 900.0
     min_replicas: int = 1
-    policy: str = "optimizer"  # or "ladder"
+    policy: str = "optimizer"  # or "ladder", or "uniform"
+    allow_root: bool = False  # may the operator use root levers (GPU clock)? It must own the hardware
     flex_action: str = "reject"  # or "defer"
     util_limit: float = 0.6
     capacity_rps: float = 3.3
@@ -94,6 +95,7 @@ class Spec:
             hold_s=float(spec.get("holdSeconds", 900)),
             min_replicas=int(spec.get("minReplicas", 1)),
             policy=str(spec.get("policy", "optimizer")),
+            allow_root=bool(spec.get("allowRoot", False)),
             flex_action=str(spec.get("flexAction", "reject")),
             util_limit=float(spec.get("utilizationLimit", 0.6)),
             capacity_rps=float(spec.get("replicaCapacityRps", 3.3)),
@@ -107,8 +109,10 @@ class Spec:
             raise ValueError("reduction.fraction must be in (0, 1)")
         if s.mode not in ("interval", "cap"):
             raise ValueError("mode must be 'interval' or 'cap'")
-        if s.policy not in ("optimizer", "ladder"):
-            raise ValueError("policy must be 'optimizer' or 'ladder'")
+        if s.policy not in ("optimizer", "ladder", "uniform"):
+            raise ValueError("policy must be 'optimizer', 'ladder' or 'uniform'")
+        if s.policy == "uniform" and not s.allow_root:
+            raise ValueError("policy 'uniform' throttles GPU clocks, a root lever: set allowRoot: true")
         if s.flex_action not in ("reject", "defer"):
             raise ValueError("flexAction must be 'reject' or 'defer'")
         if s.flex_action == "defer" and s.ramp_s + s.hold_s > DEFER_MAX_S:
@@ -133,6 +137,7 @@ class Replica:
     pod: str
     node: str
     fill: float | None  # batch fill on its node, 0..1; None if unknown
+    ip: str | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +178,7 @@ class State:
     hold_until: float | None = None
     release_started_at: float | None = None
     flex_admit: float = 1.0
+    clock_ratio: float = 1.0  # uniform policy: every replica's GPU clock / max
     replicas: int | None = None
     original: Mapping[str, int] = field(default_factory=dict)
     last_move: str | None = None
@@ -207,6 +213,7 @@ class State:
             "holdUntil": self.hold_until,
             "releaseStartedAt": self.release_started_at,
             "flexAdmit": self.flex_admit,
+            "clockRatio": self.clock_ratio,
             "replicas": self.replicas,
             "originalReplicas": dict(self.original),
             "lastMove": self.last_move,
@@ -244,6 +251,7 @@ class State:
             hold_until=s.get("holdUntil"),
             release_started_at=s.get("releaseStartedAt"),
             flex_admit=float(s["flexAdmit"]) if s.get("flexAdmit") is not None else 1.0,
+            clock_ratio=float(s["clockRatio"]) if s.get("clockRatio") is not None else 1.0,
             replicas=s.get("replicas"),
             original=dict(s.get("originalReplicas") or {}),
             last_move=s.get("lastMove"),
@@ -294,7 +302,17 @@ class Restore:
     replicas: Mapping[str, int]
 
 
-Action = SetAdmission | ScaleDown | Restore
+@dataclass(frozen=True)
+class SetClock:
+    """Set every replica of ``pool`` to the same GPU clock ratio (uniform policy; root lever)."""
+
+    pool: str
+    clock_ratio: float
+
+
+Action = SetAdmission | ScaleDown | Restore | SetClock
+
+CLOCK_STEP, CLOCK_FLOOR = 0.1, 0.4
 
 
 # -- helpers -----------------------------------------------------------------------
@@ -317,9 +335,17 @@ def admission_level(st: State) -> float | None:
     return st.flex_admit if st.phase in ACTIVE else None
 
 
+def clock_level(st: State) -> float | None:
+    """The clock ratio main.py must keep applying while an event runs (None = leave it alone)."""
+    return st.clock_ratio if st.phase in (RAMPING, HOLDING) and st.clock_ratio < 1.0 else None
+
+
 def restore_on_delete(st: State) -> list[Action]:
     if st.phase in ACTIVE and st.original:
-        return [Restore(dict(st.original)), SetAdmission(1.0, "reject")]
+        acts: list[Action] = [Restore(dict(st.original)), SetAdmission(1.0, "reject")]
+        if st.clock_ratio < 1.0:
+            acts += [SetClock(k, 1.0) for k in st.original]
+        return acts
     return []
 
 
@@ -415,7 +441,11 @@ def step(spec: Spec, book: LeverBook, model: PowerModel, st: State, obs: Observa
         if st.hold_until is not None and obs.now >= st.hold_until:
             st = replace(st, phase=RELEASING, release_started_at=obs.now,
                          message="hold complete: restoring replicas, then readmitting flex")  # fmt: skip
-            return st, [Restore(dict(st.original))]
+            release: list[Action] = [Restore(dict(st.original))]
+            if st.clock_ratio < 1.0:
+                release += [SetClock(k, 1.0) for k in st.original]
+                st = replace(st, clock_ratio=1.0)
+            return st, release
 
     if st.phase == RELEASING:
         ready = all(p.ready >= st.original.get(p.key, 0) for p in obs.pools)
@@ -433,6 +463,9 @@ def step(spec: Spec, book: LeverBook, model: PowerModel, st: State, obs: Observa
         return replace(st, shortfall_w=0.0, message=f"{watts:.0f} W <= aim {aim_w:.0f} W"), []
     if obs.load is None or pool is None:
         return replace(st, message="no load reading from the admission proxy yet; not acting blind"), []
+
+    if spec.policy == "uniform":
+        return _uniform_step(spec, book, st, obs, pool, watts, aim_w)
 
     # Cap mode: a replica removal must not push a reading over the cap.
     allow_replica = "replica" in book.allowed
@@ -481,6 +514,28 @@ def step(spec: Spec, book: LeverBook, model: PowerModel, st: State, obs: Observa
     if not allow_replica and spec.mode == "cap":
         why += f"; replica moves blocked in cap mode (reading + spike {st.spike_w:.0f} W would cross the cap)"
     return replace(st, message=why), []
+
+
+def _uniform_step(
+    spec: Spec, book: LeverBook, st: State, obs: Observation, pool: Pool, watts: float, aim_w: float
+) -> tuple[State, list[Action]]:
+    """Baseline policy: slow every GPU down equally, 0.1 of max clock per settle, until under the aim.
+
+    This is the naive response Stage 0 compared against: no notion of tiers, consent or which GPU
+    is cheapest to throttle; every request on every replica pays the same latency.
+    """
+    if not (spec.allow_root and "clock" in book.root_levers):
+        return replace(st, message="uniform policy needs the clock lever (root) and allowRoot: true"), []
+    new = round(max(CLOCK_FLOOR, st.clock_ratio - CLOCK_STEP), 2)
+    if new >= st.clock_ratio:
+        gap = watts - aim_w
+        return replace(st, shortfall_w=gap, message=f"clock at floor {CLOCK_FLOOR}; short by {gap:.0f} W"), []
+    record = {"at": obs.now, "measuredWatts": round(watts, 1), "policy": spec.policy,
+              "move": f"clock {st.clock_ratio:g}->{new:g} on every replica"}  # fmt: skip
+    st = replace(st, clock_ratio=new, last_move="clock", last_move_at=obs.now, actions=(*st.actions, record),
+                 plan={"clockRatio": new, "replicas": st.replicas, "flexAdmit": st.flex_admit},
+                 message=f"{watts:.0f} W > aim {aim_w:.0f} W: clock to {new:g}")  # fmt: skip
+    return st, [SetClock(pool.key, new)]
 
 
 def make_model(points: Sequence[Sequence[float]] | None, book: LeverBook, capacity_rps: float) -> PowerModel:

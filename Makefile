@@ -4,7 +4,7 @@ VENV := .venv
 BIN := $(VENV)/bin
 
 .PHONY: help install fmt lint type test check stage0 clean \
-        kind-up image prom deploy phase1 smoke calibrate smoke2 prom-ui kind-down
+        kind-up image prom deploy phase1 smoke calibrate smoke2 experiments report prom-ui kind-down
 
 # Phase 1: local kind cluster
 CLUSTER ?= pbo
@@ -72,6 +72,13 @@ calibrate: ## measure the power curve the operator plans with (~7 min, once per 
 
 smoke2: ## Phase 2 acceptance test: cap-mode event planned by the optimiser (~20 min)
 	python3 scripts/smoke_phase2.py
+
+experiments: ## run the experiment batch (11 events, ~3 h; resumable with the same BATCH)
+	python3 scripts/experiments.py $(if $(BATCH),--batch $(BATCH),)
+
+report: ## plot saved events: make report RUN="results/<dir> [results/<dir> ...]"
+	$(BIN)/pip install -q -e ".[study]"
+	$(BIN)/python scripts/event_report.py $(RUN)
 
 prom-ui: ## Prometheus UI at http://localhost:9090 (Ctrl-C to stop)
 	kubectl -n monitoring port-forward svc/kps-prometheus 9090

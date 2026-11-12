@@ -137,6 +137,19 @@ replicas before the object goes. Start the operator again, or as a last resort
 `kubectl patch pb <name> --type merge -p '{"metadata":{"finalizers":[]}}'`. If the operator dies
 mid-event, the admission proxy readmits flex by itself after 30 s (lease).
 
+## 7. Run the Phase 3 experiments on the Mac (~3 h, unattended)
+
+```bash
+make check && make image deploy
+make calibrate                         # if the cluster was recreated since the last calibration
+make experiments BATCH=batch1 2>&1 | tee experiments.log   # 11 events; resumable with the same BATCH
+make report RUN="results/batch1/optimizer-cap-100 results/batch1/ladder-cap-100 results/batch1/uniform-cap-100"
+```
+
+Each event lands in `results/<batch>/<run>/` (`result.json`, `timeseries.csv`, `event.png` after
+`make report`); `results/<batch>/summary.csv` has one row per event. Keep the Mac awake
+(`caffeinate -dims make experiments ...`) -- a sleeping laptop pauses Docker.
+
 ## Roadmap
 
 Learn-first items are what to read *before* starting the phase, and where.
@@ -146,7 +159,7 @@ Learn-first items are what to read *before* starting the phase, and where.
 | **0 Setup** | – | this repo, GCP project, budget, quota request | CI green; quota requested |
 | **1 Local cluster** ($0) | Kubernetes basics: Pods, Deployments, Services, Labels ([Learn Kubernetes Basics](https://kubernetes.io/docs/tutorials/kubernetes-basics/), 2–3 h); [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/) (20 min) | kind cluster (1 + 5 nodes); Prometheus via Helm; mock serving pod (vLLM API and metric names, honours `X-Service-Tier`); power-emulator **DaemonSet** exposing DCGM-named metrics; open-loop load generator ([ADR-0004](adr/0004-emulated-gpu-nodes.md)) | `make smoke` passes: watts and p99 per node rise with load; a node with no pod drops to parked watts, and at constant load the cluster total falls when a replica is removed |
 | **2 CRD + operator** ($0) | [Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), [Operator pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) (1 h); [kopf](https://kopf.readthedocs.io/): Getting started, Handlers, Timers, Status (2 h); [RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) (20 min); [pod-deletion-cost](https://kubernetes.io/docs/reference/labels-annotations-taints/#pod-deletion-cost) (10 min) | `PowerBudget` CRD (interval and cap modes); kopf operator, closed loop on measured watts; admission proxy with lease; optimiser over flex admission + replicas with a calibrated power model; ladder baseline; graceful drain ([ADR-0005](adr/0005-powerbudget-operator.md), [ADR-0006](adr/0006-admission-and-optimizer.md)) | `make smoke2` passes in cap mode: target reached in the ramp, no reading above the cap, premium SLO held, release in order, no failed premium/standard requests |
-| **3 Allocator + levers** ($0) | re-read `studies/stage0/stage0_allocation.py` (its greedy loop is the allocator); [PromQL basics](https://prometheus.io/docs/prometheus/latest/querying/basics/) | allocation across pools (prefill/decode) and per-tier admission rates; drain; event report; ladder vs uniform vs optimiser | uniform vs merit order end to end on kind |
+| **3 Baselines + experiments** ($0) | re-read `studies/stage0/stage0_allocation.py` (the uniform cut it compares against) | `ladder` and `uniform` baselines, 0.1 admission steps, event record + figures, experiment batch ([ADR-0007](adr/0007-baselines-and-experiments.md)); prefill/decode pools if time allows | `make experiments` completes; summary.csv + figures | uniform vs merit order end to end on kind |
 | **4 GKE + T4** (~$5) | [Terraform GCP tutorial](https://developer.hashicorp.com/terraform/tutorials/gcp-get-started) (2 h); GKE docs: GPU node pools, Spot VMs, DCGM metrics, Managed Prometheus (2 h); vLLM *Deploying with Kubernetes* (1 h) | Terraform: cluster, Spot T4 pool, Spot CPU pool; vLLM on the T4; DCGM → Managed Prometheus | real T4 watts respond to a budget |
 | **5 Grid + SLO guard** (~$2) | Grafana alerting + webhooks; Pub/Sub Python client | price/emergency replay → Pub/Sub → `PowerBudget`; burn-rate alert → back-off | a replayed event runs hands-off |
 | **6 Experiments + report** (~$20) | – | policy × depth × trace × tier-mix matrix; figures; USENIX report | time to depth and hold accuracy per policy |

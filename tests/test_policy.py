@@ -21,6 +21,7 @@ from pbo.operator.policy import (
     Restore,
     ScaleDown,
     SetAdmission,
+    SetClock,
     Spec,
     State,
     admission_level,
@@ -76,11 +77,11 @@ def test_status_round_trips() -> None:
 
 
 def test_first_tick_applies_the_whole_plan_at_once() -> None:
-    """Feedforward: admission and the replica removal in the same tick (4 replicas + half flex)."""
+    """Feedforward: admission and the replica removal in the same tick (4 replicas + 60 % of flex)."""
     st, acts = run(SPEC, State(), obs(0, 890))
     assert st.phase == RAMPING and st.target_w == 790 and st.plan_target_w == 765
-    assert acts == [SetAdmission(0.5, "reject"), ScaleDown("pbo/mock-llm", 4, ("p4",), ("worker4",))]
-    assert st.plan["replicas"] == 4 and admission_level(st) == 0.5
+    assert acts == [SetAdmission(0.6, "reject"), ScaleDown("pbo/mock-llm", 4, ("p4",), ("worker4",))]
+    assert st.plan["replicas"] == 4 and admission_level(st) == 0.6
     assert st.last_move == "replica" and st.spike_pending and st.pre_move_w == 890
 
 
@@ -199,3 +200,28 @@ def test_loop_reaches_and_holds_on_a_toy_cluster() -> None:
     assert st.phase == HOLDING and st.ramp_met
     assert MODEL.cluster_w(replicas, LOAD.admitted(admit), 5) + 20 <= st.target_w
     assert admit > 0  # did not throw away all flex to get there
+
+
+# -- uniform baseline -----------------------------------------------------------------
+
+UNIFORM = Spec(reduction_watts=100, margin_w=25, ramp_s=600, hold_s=300, policy="uniform", allow_root=True)
+
+
+def test_uniform_needs_root_consent() -> None:
+    with pytest.raises(ValueError):
+        Spec.from_k8s({"reduction": {"watts": 100}, "policy": "uniform"})
+    assert Spec.from_k8s({"reduction": {"watts": 100}, "policy": "uniform", "allowRoot": True}).allow_root
+
+
+def test_uniform_steps_every_clock_down_then_restores() -> None:
+    st, acts = run(UNIFORM, State(), obs(0, 890))
+    assert acts == [SetClock("pbo/mock-llm", 0.9)] and st.clock_ratio == 0.9
+    st, acts = run(UNIFORM, st, obs(20, 850))  # clock settles in 10 + 30 s
+    assert acts == []
+    st, acts = run(UNIFORM, st, obs(40, 850))
+    assert acts == [SetClock("pbo/mock-llm", 0.8)]
+    st, _ = run(UNIFORM, st, obs(80, 760))  # settled, under target -> hold
+    assert st.phase == HOLDING
+    st, acts = run(UNIFORM, st, obs(80 + 300, 760))
+    assert Restore({"pbo/mock-llm": 5}) in acts and SetClock("pbo/mock-llm", 1.0) in acts
+    assert st.clock_ratio == 1.0

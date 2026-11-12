@@ -1,0 +1,18 @@
+{
+  "spec": {
+    "reduction": {
+      "watts": 100.0
+    },
+    "mode": "cap",
+    "policy": "optimizer",
+    "marginWatts": 30.0,
+    "rampSeconds": 300,
+    "holdSeconds": 600
+  },
+  "rps": 8.0,
+  "mix": {
+    "premium": 0.3333333333333333,
+    "standard": 0.3333333333333333,
+    "flex": 0.3333333333333333
+  }
+}

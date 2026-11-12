@@ -1,0 +1,57 @@
+{
+  "aboveTargetSeconds": 0,
+  "actions": [
+    {
+      "at": 1794457978.0525074,
+      "measuredWatts": 852.8,
+      "move": "flex admit 1->0.1; pbo/mock-llm 5->3",
+      "nodes": "pbo-worker,pbo-worker4",
+      "policy": "optimizer"
+    },
+    {
+      "at": 1794458099.1685016,
+      "move": "spike measured",
+      "spikeWatts": 0
+    }
+  ],
+  "baselineWatts": 852.8,
+  "biasWatts": 13.5,
+  "clockRatio": 1,
+  "effectiveMarginWatts": 74.8,
+  "flexAdmit": 1,
+  "holdUntil": 1794458699.1685016,
+  "instantWatts": 625.7,
+  "lastMove": "replica",
+  "lastMoveAt": 1794457978.0525074,
+  "lastTickAt": 1794458710.766682,
+  "measuredWatts": 628.6,
+  "message": "replicas Ready; flex readmitted; event done",
+  "noiseWatts": 21.4,
+  "originalReplicas": {
+    "pbo/mock-llm": 5
+  },
+  "peakHoldWatts": 664.4,
+  "phase": "Done",
+  "plan": {
+    "feasible": true,
+    "flexAdmit": 0.1,
+    "model": "calibration",
+    "predictedWatts": 616.3,
+    "reason": "cheapest plan meeting 678 W: 3 replicas, flex admit 0.10 -> 616 W predicted, util 0.58",
+    "replicas": 3,
+    "utilisation": 0.578
+  },
+  "planTargetWatts": 678,
+  "postMovePeakWatts": 779.1,
+  "preMoveWatts": 852.8,
+  "rampMet": true,
+  "reachedAt": 1794458099.1685016,
+  "releaseStartedAt": 1794458700.648477,
+  "replicas": 3,
+  "shortfallWatts": 0,
+  "spikePending": false,
+  "spikeSource": "measured",
+  "spikeWatts": 0,
+  "startedAt": 1794457978.0525074,
+  "targetWatts": 752.8
+}

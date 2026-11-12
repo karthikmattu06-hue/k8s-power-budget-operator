@@ -1,0 +1,51 @@
+{
+  "run_id": "smoke-20261111-233050-optimizer-cap",
+  "policy": "optimizer",
+  "mode": "cap",
+  "requested_w": 100.0,
+  "rps": 8.0,
+  "mix": {
+    "premium": 0.3333333333333333,
+    "standard": 0.3333333333333333,
+    "flex": 0.3333333333333333
+  },
+  "baseline_w": 852.8,
+  "target_w": 752.8,
+  "aim_w": 678,
+  "margin_w": 74.8,
+  "noise_w": 21.4,
+  "reached_s": 121.1,
+  "ramp_met": true,
+  "done": true,
+  "cap_peak_w": 651.6,
+  "cap_above_s": 0,
+  "intervals": [
+    [
+      1794458100,
+      610.8
+    ]
+  ],
+  "intervals_ok": true,
+  "hold_mean_w": 610.4,
+  "achieved_w": 242.4,
+  "premium_p99_s": 0.401,
+  "standard_p99_s": 0.573,
+  "flex_p99_s": 0.292,
+  "flex_shed_frac": 0.843,
+  "failed_protected": 0,
+  "release_ok": true,
+  "final_plan": {
+    "feasible": true,
+    "flexAdmit": 0.1,
+    "model": "calibration",
+    "predictedWatts": 616.3,
+    "reason": "cheapest plan meeting 678 W: 3 replicas, flex admit 0.10 -> 616 W predicted, util 0.58",
+    "replicas": 3,
+    "utilisation": 0.578
+  },
+  "spike_w": 0,
+  "spike_source": "measured",
+  "t0": 1794457976.6629918,
+  "hold_start": 1794458099.1685016,
+  "hold_until": 1794458699.1685016
+}

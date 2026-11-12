@@ -166,6 +166,19 @@ async def post_rate(request: web.Request) -> web.Response:
     return web.json_response({"rps": rps})
 
 
+async def post_mix(request: web.Request) -> web.Response:
+    """``POST /mix {"premium": 0.7, "standard": 0.15, "flex": 0.15}``: change the tier mix live."""
+    lg = request.app[LG_KEY]
+    try:
+        raw = await request.json()
+        mix = parse_mix(",".join(f"{k}={float(v)}" for k, v in dict(raw).items()))
+    except (ValueError, TypeError, AttributeError) as e:
+        raise web.HTTPBadRequest(text='expected {"premium": x, "standard": y, "flex": z}') from e
+    lg.mix = mix
+    log.info("mix set to %s", json.dumps(mix))
+    return web.json_response(mix)
+
+
 async def healthz(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
@@ -176,6 +189,7 @@ async def amain(args: argparse.Namespace) -> None:
     app[LG_KEY] = lg
     app.router.add_get("/metrics", get_metrics)
     app.router.add_post("/rate", post_rate)
+    app.router.add_post("/mix", post_mix)
     app.router.add_get("/healthz", healthz)
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()

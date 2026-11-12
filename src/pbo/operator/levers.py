@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 
 from pbo.curves import CurveBook, Num
 
-DEFAULT_SPEED_S = {"admission": 10.0, "replica": 60.0}
+DEFAULT_SPEED_S = {"admission": 10.0, "replica": 60.0, "clock": 10.0}
 DEFAULT_PARKED_FRAC, DEFAULT_BUSY_FRAC, DEFAULT_NOMINAL_W = 0.17, 0.84, 250.0
 DEFAULT_DEFER_MAX_S = 600.0
 
@@ -47,9 +47,10 @@ class LeverBook:
     busy_frac: float  # mixed (monolithic) traffic
     speed_s: dict[str, float]  # lever -> seconds until its effect is complete
     defer_max_s: float
-    allowed: frozenset[str]  # levers the operator has authority to use
+    allowed: frozenset[str]  # levers the operator may use on its own authority
     slo: dict[str, float]  # e.g. {"premium_ttft_p99_s": 2.0, ...}
     sources: dict[str, str] = field(default_factory=dict)
+    root_levers: frozenset[str] = frozenset()  # need root (hardware owner) and spec.allowRoot
     combined_levers_note: str = ""
 
     @property
@@ -74,6 +75,7 @@ def default_book() -> LeverBook:
         speed_s=dict(DEFAULT_SPEED_S),
         defer_max_s=DEFAULT_DEFER_MAX_S,
         allowed=frozenset({"admission", "replica"}),
+        root_levers=frozenset({"clock"}),
         slo={"premium_ttft_p99_s": 2.0, "standard_ttft_p99_s": 6.0, "tpot_p99_s": 0.05, "flex_ttlt_s": 600.0},
         sources={"all": "default"},
     )
@@ -113,6 +115,13 @@ def from_contract(book: CurveBook, pool: str = "mono") -> LeverBook:
         if entries and all(e.authority == "operator" for e in entries):
             allowed.add(lever)
     src["authority"] = "contract"
+    # Clock locking is a root lever in the contract (it changes the hardware, not the workload).
+    # Its depth and speed are n/a there; the emulator's clock^3 model stands in (assumed).
+    root = set()
+    clock = book.find("gpu_clock_lock", "decode") or book.find("gpu_clock_lock", "prefill")
+    if clock and all(e.authority == "root" for e in clock):
+        root.add("clock")
+    src["speed_clock"] = "default (contract n/a)"
 
     # -- SLOs from the tier table (assumed values in rev 2), in seconds
     slo = default_book().slo
@@ -136,6 +145,7 @@ def from_contract(book: CurveBook, pool: str = "mono") -> LeverBook:
         speed_s=speed,
         defer_max_s=DEFAULT_DEFER_MAX_S,
         allowed=frozenset(allowed),
+        root_levers=frozenset(root),
         slo=slo,
         sources=src,
         combined_levers_note=(

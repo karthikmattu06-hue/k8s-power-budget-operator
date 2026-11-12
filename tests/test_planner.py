@@ -46,9 +46,9 @@ def test_contract_prior_is_a_straight_line() -> None:
 
 
 def test_optimiser_finds_the_cheap_mix() -> None:
-    """Baseline 5 replicas = 890 W. Aim 765 W. Cheapest: 4 replicas + half the flex."""
+    """Baseline 5 replicas = 890 W. Aim 765 W. Cheapest: 4 replicas + 60 % of flex."""
     plan = optimise(Knobs(5, 1.0), LOAD, MODEL, cons(765))
-    assert plan.feasible and plan.end == Knobs(4, 0.5)
+    assert plan.feasible and plan.end == Knobs(4, 0.6)
     assert plan.next_move == "admission"  # admission first: spike-free and lowers utilisation
     assert plan.predicted_w <= 765 and plan.utilisation <= 0.6
 
@@ -58,7 +58,7 @@ def test_optimiser_never_breaks_premium_to_save_flex() -> None:
     plan = optimise(Knobs(5, 1.0), LOAD, MODEL, cons(700))
     assert plan.feasible
     assert utilisation(plan.end, LOAD, 3.3) <= 0.6
-    assert plan.end.replicas == 3 and plan.end.flex_admit == 0.0
+    assert plan.end.replicas == 3 and plan.end.flex_admit == 0.2  # 0.1 steps keep a fifth of flex
 
 
 def test_infeasible_target_gives_deepest_safe_cut() -> None:
@@ -92,7 +92,8 @@ def test_ladder_sheds_all_flex_then_replicas() -> None:
 
 def test_contract_feeds_speeds_power_and_slos() -> None:
     b = from_contract(load_curves(CONTRACT))
-    assert b.speed_s == {"admission": 8.0, "replica": 90.0}
+    assert b.speed_s == {"admission": 8.0, "replica": 90.0, "clock": 10.0}  # clock: contract n/a -> default
+    assert b.root_levers == {"clock"}
     assert b.parked_w == pytest.approx(42.5) and b.busy_w == pytest.approx(210)
     assert b.slo["premium_ttft_p99_s"] == 2.0 and b.slo["flex_ttlt_s"] == 600.0
     assert b.allowed == {"admission", "replica"}
