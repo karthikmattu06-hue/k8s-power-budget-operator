@@ -25,10 +25,10 @@ Why these terms
 
 Order of execution falls out instead of being written down: shedding flex lowers utilisation and
 removing replicas raises it, so doing the admission change first keeps every intermediate state
-inside the utilisation limit whenever the end state is. The first move is therefore the admission
-change (instant, no power spike), then replicas one at a time. After each move the operator
-measures, corrects the model and plans again (receding horizon) -- the plan is never trusted
-blindly.
+inside the utilisation limit whenever the end state is. The operator applies the whole plan in one
+tick (admission and replicas together; the admission change takes effect within seconds, the
+replicas drain over ~10 s), then measures, corrects the model and plans again (receding horizon):
+feedforward for the big jump, feedback for the trim. The plan is never trusted blindly.
 
 If no state meets the target, the plan is the deepest cut that keeps premium safe, and the gap
 is reported as a shortfall: budgets bind on flex, they are advisory on premium and standard.

@@ -151,14 +151,13 @@ class Kube:
     def apply(self, action: ScaleDown | Restore) -> None:
         if isinstance(action, ScaleDown):
             ns, name = action.pool.split("/", 1)
-            if action.victim:
-                # Mark the chosen pod as cheapest to delete, then scale down by one.
-                body: dict[str, Any] = {"metadata": {"annotations": {DELETION_COST: "-1000"}}}
-                self.core.patch_namespaced_pod(action.victim, ns, body)
+            # Mark the chosen pods as cheapest to delete, then scale down.
+            body: dict[str, Any] = {"metadata": {"annotations": {DELETION_COST: "-1000"}}}
+            for pod in action.victims:
+                self.core.patch_namespaced_pod(pod, ns, body)
             self.apps.patch_namespaced_deployment_scale(name, ns, {"spec": {"replicas": action.to_replicas}})
-            log.info(
-                "scaled %s to %d (victim %s on %s)", action.pool, action.to_replicas, action.victim, action.victim_node
-            )
+            log.info("scaled %s to %d (victims %s on %s)", action.pool, action.to_replicas, action.victims,
+                     action.victim_nodes)  # fmt: skip
         else:
             for key, replicas in action.replicas.items():
                 ns, name = key.split("/", 1)

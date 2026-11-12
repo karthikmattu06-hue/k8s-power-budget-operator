@@ -174,7 +174,7 @@ def main() -> int:
               f"aim {st.get('planTargetWatts')} W")  # fmt: skip
         for a in st.get("actions") or []:
             where = (
-                f"at {a['measuredWatts']} W  {a.get('node') or ''}"
+                f"at {a['measuredWatts']} W  {a.get('nodes') or ''}"
                 if "measuredWatts" in a
                 else f"{a.get('spikeWatts')} W"
             )

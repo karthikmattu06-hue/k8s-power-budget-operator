@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from pbo.operator.levers import default_book
@@ -73,47 +75,57 @@ def test_status_round_trips() -> None:
 # -- ramp ---------------------------------------------------------------------------
 
 
-def test_first_tick_sets_target_and_sheds_flex_first() -> None:
+def test_first_tick_applies_the_whole_plan_at_once() -> None:
+    """Feedforward: admission and the replica removal in the same tick (4 replicas + half flex)."""
     st, acts = run(SPEC, State(), obs(0, 890))
     assert st.phase == RAMPING and st.target_w == 790 and st.plan_target_w == 765
-    assert acts == [SetAdmission(0.5, "reject")]  # optimiser: 4 replicas + half flex; admission first
+    assert acts == [SetAdmission(0.5, "reject"), ScaleDown("pbo/mock-llm", 4, ("p4",), ("worker4",))]
     assert st.plan["replicas"] == 4 and admission_level(st) == 0.5
+    assert st.last_move == "replica" and st.spike_pending and st.pre_move_w == 890
 
 
-def test_waits_until_settled_then_removes_the_emptiest_replica() -> None:
+def test_waits_for_the_slowest_lever_to_settle() -> None:
     st, _ = run(SPEC, State(), obs(0, 890))
-    st, acts = run(SPEC, st, obs(20, 860))  # admission settles at 10 + 30 = 40 s
-    assert acts == [] and "settle" in st.message
-    st, acts = run(SPEC, st, obs(40, 860))
-    assert acts == [ScaleDown("pbo/mock-llm", 4, "p4", "worker4")]  # p4 has the lowest fill
-    assert st.spike_pending and st.pre_move_w == 860
+    st, acts = run(SPEC, st, obs(60, 780, n=4))  # replica settles at 60 + 30 = 90 s
+    assert acts == [] and "settle" in st.message and st.phase == RAMPING
 
 
 def test_no_victory_on_an_unsettled_dip() -> None:
     st, _ = run(SPEC, State(), obs(0, 890))
-    st, _ = run(SPEC, st, obs(5, 700))  # a transient dip before the admission change has settled
+    st, _ = run(SPEC, st, obs(5, 700, n=4))  # a transient dip before anything has settled
     assert st.phase == RAMPING
-    st, _ = run(SPEC, st, obs(45, 760))  # settled and at/below target (790)
+    st, _ = run(SPEC, st, obs(95, 760, n=4))  # settled, plan in place, at/below target (790)
     assert st.phase == HOLDING and st.ramp_met
+
+
+def test_hold_waits_for_the_plan_to_be_in_place() -> None:
+    """Regression (second cap run): a reading under the target with the plan half done is not 'reached'."""
+    st = State(phase=RAMPING, started_at=0, target_w=790, plan_target_w=765, baseline_w=890, flex_admit=0.0,
+               replicas=4, original={"pbo/mock-llm": 5}, plan={"replicas": 3, "flexAdmit": 0.0},
+               bias_w=40)  # fmt: skip
+    st, acts = run(SPEC, st, obs(100, 780, n=4))  # under 790, above the 765 aim, plan said 3
+    assert st.phase == RAMPING
+    assert any(isinstance(a, ScaleDown) for a in acts)
 
 
 def test_spike_is_learned_against_the_average_not_one_reading() -> None:
     """Regression (first cap run): a high single reading at the move hid the spike (learned 0 W)."""
-    st, _ = run(SPEC, State(), obs(0, 890))
-    st, _ = run(SPEC, st, obs(40, 800, inst=900))  # replica removed; this one reading is high
-    assert st.pre_move_w == 800  # reference is the 20 s average
-    st, _ = run(SPEC, st, obs(60, 840, n=4, inst=880))  # drain transient
-    st, _ = run(SPEC, st, obs(130, 760, n=4))  # settled (40 + 60 + 30)
-    assert st.spike_w == pytest.approx(80) and st.spike_source == "measured" and not st.spike_pending
+    st, _ = run(SPEC, State(), obs(0, 890, inst=990))  # removal happens now; this one reading is high
+    assert st.pre_move_w == 890  # reference is the 20 s average
+    st, _ = run(SPEC, st, obs(20, 900, n=4, inst=950))  # drain transient
+    st, _ = run(SPEC, st, obs(95, 770, n=4))  # settled (60 + 30)
+    assert st.spike_w == pytest.approx(60) and st.spike_source == "measured" and not st.spike_pending
     assert any(a.get("move") == "spike measured" for a in st.actions)
 
 
-def test_spike_estimate_never_drops_below_default_or_previous() -> None:
+def test_first_measured_spike_replaces_default_then_keeps_the_largest() -> None:
     st, _ = run(SPEC, State(), obs(0, 890))
-    st, _ = run(SPEC, st, obs(40, 860))
-    st, _ = run(SPEC, st, obs(60, 870, n=4, inst=880))  # only +20 W seen
-    st, _ = run(SPEC, st, obs(130, 760, n=4))
-    assert st.spike_w == 50 and st.spike_source == "default"  # conservative for a cap
+    st, _ = run(SPEC, st, obs(20, 880, n=4, inst=900))  # +10 W
+    st, _ = run(SPEC, st, obs(95, 770, n=4))
+    assert st.spike_w == pytest.approx(10) and st.spike_source == "measured"
+    later = replace(st, spike_pending=True, pre_move_w=700, post_move_peak_w=703, last_move_at=100)
+    later, _ = run(SPEC, later, obs(200, 690, n=3))  # +3 W: smaller, estimate stays at the largest
+    assert later.spike_w == pytest.approx(10)
 
 
 def test_cap_margin_covers_reading_noise() -> None:

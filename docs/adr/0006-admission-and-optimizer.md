@@ -31,8 +31,10 @@ Date: 2026-11-11 · Status: accepted
   ≤ utilisation limit (0.6: premium p99 held at ~50 %, marginal near 60 %).
 * Exhaustive search (≤ 30 states); infeasible targets get the deepest premium-safe cut and a
   reported shortfall (budgets bind on flex, advise on premium/standard).
-* The admission change comes first: it lowers utilisation and has no power spike, so every
-  intermediate state stays within the limit. The order is a consequence, not a rule.
+* The whole plan is applied in one tick (feedforward), then trimmed after each settle (feedback).
+  Shedding flex lowers utilisation and removing replicas raises it, so any end state within the
+  limit is safe to reach directly. The second cap run, moving one knob per settle period, could
+  not finish its plan inside a 300 s ramp and crossed the cap from a half-finished state.
 
 **Power model** (`pbo.operator.model`): one curve, node watts vs requests/s per replica,
 measured on the cluster by `scripts/calibrate.py` (ConfigMap `pbo-power-model`); fallback is a

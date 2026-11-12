@@ -13,12 +13,14 @@ Phases
 * **Pending -> Ramping.** First valid power reading becomes the baseline. The budget is
   ``target = baseline - reduction``; the planner aims at ``target - margin`` so noise and small
   model errors do not cross the line.
-* **Ramping.** Plan, make one move, wait until it has *settled*, measure, plan again. "Settled"
+* **Ramping.** Plan, apply the *whole* plan at once (feedforward: admission and every replica
+  removal it calls for, in one tick), wait until it has *settled*, measure, re-plan and trim
+  (feedback). One knob per settle period was too slow to fit a 300 s ramp. "Settled"
   = the lever's ``speed_s`` from the contract (admission 8 s, replica 90 s) plus the sensing lag
   (scrape + averaging window). No decision is made on a reading taken mid-transition -- the
   first Phase 2 run declared victory on a dip that was not real.
-* **Holding** starts when a settled reading is at or below target, or when the ramp deadline
-  passes. It lasts ``hold_s``. The loop keeps correcting if the power drifts up.
+* **Holding** starts when the latest plan is fully in place and a settled reading is at or below
+  target, or when the ramp deadline passes. It lasts ``hold_s``. The loop keeps correcting if the power drifts up.
 * **Releasing.** Replicas are restored first; flex is readmitted only once they are Ready.
   Readmitting flex onto the reduced pool first would overload it.
 
@@ -279,10 +281,12 @@ class SetAdmission:
 
 @dataclass(frozen=True)
 class ScaleDown:
+    """Scale ``pool`` down to ``to_replicas``; ``victims`` are the pods we want Kubernetes to delete."""
+
     pool: str
     to_replicas: int
-    victim: str | None
-    victim_node: str | None
+    victims: tuple[str, ...] = ()
+    victim_nodes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -296,11 +300,10 @@ Action = SetAdmission | ScaleDown | Restore
 # -- helpers -----------------------------------------------------------------------
 
 
-def choose_victim(pool: Pool) -> Replica | None:
-    """The pod on the node with the emptiest batch: fewest in-flight requests disturbed."""
-    if not pool.pods:
-        return None
-    return min(pool.pods, key=lambda r: (r.fill is None, r.fill if r.fill is not None else 0.0, r.pod))
+def choose_victims(pool: Pool, k: int) -> list[Replica]:
+    """The ``k`` pods on the nodes with the emptiest batches: fewest in-flight requests disturbed."""
+    ranked = sorted(pool.pods, key=lambda r: (r.fill is None, r.fill if r.fill is not None else 0.0, r.pod))
+    return ranked[: max(k, 0)]
 
 
 def settled(st: State, book: LeverBook, spec: Spec, now: float) -> bool:
@@ -369,10 +372,13 @@ def step(spec: Spec, book: LeverBook, model: PowerModel, st: State, obs: Observa
         st = replace(st, post_move_peak_w=max(st.post_move_peak_w or obs.instant_w, obs.instant_w))
         if is_settled and st.pre_move_w is not None and st.post_move_peak_w is not None:
             seen = max(st.post_move_peak_w - st.pre_move_w, 0.0)
+            # Until a removal has been measured, the 50 W default stands; after that, the largest
+            # measured spike (the noise margin already covers single-reading scatter).
+            first = st.spike_source == "default"
             st = replace(
                 st,
-                spike_w=max(st.spike_w, seen),
-                spike_source="measured" if seen >= st.spike_w else st.spike_source,
+                spike_w=seen if first else max(st.spike_w, seen),
+                spike_source="measured",
                 spike_pending=False,
                 actions=(*st.actions, {"at": obs.now, "move": "spike measured", "spikeWatts": round(seen, 1)}),
             )
@@ -384,8 +390,16 @@ def step(spec: Spec, book: LeverBook, model: PowerModel, st: State, obs: Observa
         st = replace(st, bias_w=0.5 * st.bias_w + 0.5 * (watts - raw))
 
     # -- phase transitions --------------------------------------------------------
+    # The hold may start only once the latest plan is fully in place (or we are already inside the
+    # margin). Otherwise a passing dip on the way down starts the hold in a state that sits right
+    # at the cap -- what the second cap run did with 4 replicas when the plan said 3.
+    plan_done = (
+        not st.plan
+        or (st.plan.get("replicas") == knobs.replicas and st.plan.get("flexAdmit") == knobs.flex_admit)
+        or watts <= aim_w
+    )
     if st.phase == RAMPING:
-        if is_settled and watts <= target_w:
+        if is_settled and watts <= target_w and plan_done:
             st = replace(st, phase=HOLDING, reached_at=obs.now, ramp_met=obs.now <= deadline,
                          hold_until=obs.now + spec.hold_s)  # fmt: skip
         elif obs.now > deadline:
@@ -442,28 +456,27 @@ def step(spec: Spec, book: LeverBook, model: PowerModel, st: State, obs: Observa
         "reason": plan.reason,
     }
     st = replace(st, plan=summary, shortfall_w=0.0 if plan.feasible else max(plan.predicted_w - aim_w, 0.0))
-    nxt = plan.next_knobs(knobs)
+    # Feedforward: apply the whole plan in one tick (admission and every replica it calls for),
+    # then let feedback trim it after one settle. Moving one knob per settle period was too slow
+    # to finish inside a 300 s ramp.
     record = {"at": obs.now, "measuredWatts": round(watts, 1), "policy": spec.policy}
-    if plan.next_move == "admission":
-        st = replace(st, flex_admit=nxt.flex_admit, last_move="admission", last_move_at=obs.now,
-                     actions=(*st.actions, {**record, "move": f"flex admit {knobs.flex_admit:g}->{nxt.flex_admit:g}"}),
-                     message=plan.reason)  # fmt: skip
-        return st, [SetAdmission(nxt.flex_admit, spec.flex_action)]
-    if plan.next_move == "replica":
-        victim = choose_victim(pool)
-        st = replace(
-            st,
-            replicas=nxt.replicas,
-            last_move="replica",
-            last_move_at=obs.now,
-            pre_move_w=watts,  # the 20 s average, not one reading
-            post_move_peak_w=None,
-            spike_pending=True,
-            actions=(*st.actions, {**record, "move": f"{pool.key} {knobs.replicas}->{nxt.replicas}",
-                                   "node": victim.node if victim else None}),
-            message=plan.reason,
-        )  # fmt: skip
-        return st, [ScaleDown(pool.key, nxt.replicas, victim.pod if victim else None, victim.node if victim else None)]
+    actions: list[Action] = []
+    moves: list[str] = []
+    if plan.end.flex_admit < knobs.flex_admit and "admission" in book.allowed:
+        actions.append(SetAdmission(plan.end.flex_admit, spec.flex_action))
+        moves.append(f"flex admit {knobs.flex_admit:g}->{plan.end.flex_admit:g}")
+        st = replace(st, flex_admit=plan.end.flex_admit, last_move="admission", last_move_at=obs.now)
+    if plan.end.replicas < knobs.replicas:
+        victims = choose_victims(pool, knobs.replicas - plan.end.replicas)
+        actions.append(ScaleDown(pool.key, plan.end.replicas, tuple(v.pod for v in victims),
+                                 tuple(v.node for v in victims)))  # fmt: skip
+        moves.append(f"{pool.key} {knobs.replicas}->{plan.end.replicas}")
+        st = replace(st, replicas=plan.end.replicas, last_move="replica", last_move_at=obs.now,
+                     pre_move_w=watts, post_move_peak_w=None, spike_pending=True)  # fmt: skip
+        record["nodes"] = ",".join(v.node for v in victims)
+    if actions:
+        st = replace(st, actions=(*st.actions, {**record, "move": "; ".join(moves)}), message=plan.reason)
+        return st, actions
     why = plan.reason
     if not allow_replica and spec.mode == "cap":
         why += f"; replica moves blocked in cap mode (reading + spike {st.spike_w:.0f} W would cross the cap)"

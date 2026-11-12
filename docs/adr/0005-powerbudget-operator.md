@@ -32,8 +32,8 @@ established:
   `rampSeconds` (default 600); `holdSeconds`; `minReplicas`; `policy` = `optimizer` | `ladder`;
   `flexAction` = `reject` | `defer`; `utilizationLimit`; `replicaCapacityRps`; `scope`.
   Status holds the whole state machine, so the operator process is stateless.
-* **Phases.** Pending → Ramping → Holding → Releasing → Done. Holding starts when a *settled*
-  reading is at or below target, or at the ramp deadline.
+* **Phases.** Pending → Ramping → Holding → Releasing → Done. Holding starts when the latest plan
+  is fully in place and a *settled* reading is at or below target, or at the ramp deadline.
 * **Settling.** No decision -- not even "target reached" -- is made until the last move has
   settled: the lever's `speed_s` from the lever-curve contract (admission 8 s, replica 90 s)
   plus the sensing lag (5-s scrape + 20-s averaging, 30 s by default).
@@ -43,8 +43,8 @@ established:
   removal spike estimate stays under the cap, and during the ramp only if it will have settled
   before the deadline. Admission changes have no spike and are always allowed. The spike is
   learned from the operator's own removals: peak single reading after the move minus the 20-s
-  average before it; the estimate keeps the largest seen and never drops below 50 W (a
-  deliberately conservative floor, well above the 0–5 W measured).
+  average before it. 50 W until the first removal is measured, then the largest measured
+  (0–8 W in the 11 Nov runs; the noise margin already covers single-reading scatter).
 * **Cap margin covers sensor noise.** A cap is judged on single 5-s readings, which scatter
   around the 20-s average the planner sees (std dev 22–32 W in the 11 Nov runs). At event start
   the operator reads the std dev of single readings over the past 2 min and uses
@@ -71,7 +71,8 @@ How the moves are chosen is ADR-0006.
   lever (ADR-0006).
 * A hard cap on a noisy signal costs headroom: the margin grows with the noise, so the cut
   overshoots more and more flex is shed than under interval scoring of the same event.
-* Reaching a target takes one settle per move (~40 s for admission, ~120 s per replica).
+* Reaching a target takes one settle period for the whole plan (~120 s when replicas move), plus
+  one per corrective trim.
 * `kubectl delete pb` waits for the operator (finalizer); if the operator is down it hangs until
   the operator returns or the finalizer is removed by hand.
 * The operator's 5-s view cannot see shorter spikes; a real cap would be checked against the
